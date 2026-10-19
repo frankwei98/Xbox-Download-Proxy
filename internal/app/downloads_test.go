@@ -3,10 +3,12 @@ package app
 import (
 	"bytes"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"xboxdownloadproxy/internal/config"
@@ -146,5 +148,139 @@ func TestOfflineOptInDoesNotTouchLibraryAndTogglePreservesFiles(t *testing.T) {
 	}
 	if got, err := os.ReadFile(file); err != nil || string(got) != "partial" {
 		t.Fatal("disabled feature removed file", err)
+	}
+}
+
+type blockingResponseWriter struct {
+	http.ResponseWriter
+	started chan struct{}
+	release <-chan struct{}
+	once    sync.Once
+}
+
+func (w *blockingResponseWriter) Write(p []byte) (int, error) {
+	w.once.Do(func() {
+		close(w.started)
+		<-w.release
+	})
+	return w.ResponseWriter.Write(p)
+}
+
+func TestFileStreamDoesNotHoldDownloadLibraryLock(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		act  func(*App) error
+	}{
+		{
+			name: "save config",
+			act: func(a *App) error {
+				return a.Update(a.Config())
+			},
+		},
+		{
+			name: "disable offline downloads",
+			act: func(a *App) error {
+				cfg := a.Config()
+				cfg.OfflineEnabled = false
+				return a.Update(cfg)
+			},
+		},
+		{
+			name: "close app",
+			act: func(a *App) error {
+				a.Close()
+				return nil
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			id := strings.Repeat("d", 32)
+			root := filepath.Join(dir, "downloads")
+			if err := os.MkdirAll(filepath.Join(root, id), 0700); err != nil {
+				t.Fatal(err)
+			}
+			payload := []byte("completed-download-payload")
+			name := "game.bin"
+			if err := os.WriteFile(filepath.Join(root, id, name), payload, 0600); err != nil {
+				t.Fatal(err)
+			}
+			task := offline.Task{ID: id, Name: name, URL: "https://cdn.example/game", State: "completed", Bytes: int64(len(payload)), TotalBytes: int64(len(payload)), CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
+			b, err := json.Marshal([]offline.Task{task})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, "tasks.json"), b, 0600); err != nil {
+				t.Fatal(err)
+			}
+			cfg := config.Default()
+			cfg.OfflineEnabled = true
+			a := New(dir, "secret", cfg)
+			defer a.Close()
+			if err := a.DownloadError(); err != nil {
+				t.Fatal(err)
+			}
+
+			started := make(chan struct{})
+			release := make(chan struct{})
+			var releaseOnce sync.Once
+			unblock := func() { releaseOnce.Do(func() { close(release) }) }
+			defer unblock()
+			response := httptest.NewRecorder()
+			writer := &blockingResponseWriter{ResponseWriter: response, started: started, release: release}
+			request := httptest.NewRequest(http.MethodGet, "http://localhost/api/downloads/"+id+"/file", nil)
+			request.Header.Set("Authorization", "Bearer secret")
+			request.Header.Set("Range", "bytes=2-8")
+			served := make(chan struct{})
+			go func() {
+				a.Handler().ServeHTTP(writer, request)
+				close(served)
+			}()
+
+			select {
+			case <-started:
+			case <-time.After(time.Second):
+				unblock()
+				select {
+				case <-served:
+				case <-time.After(time.Second):
+				}
+				t.Fatal("file response did not reach the blocked write")
+			}
+
+			updated := make(chan error, 1)
+			go func() { updated <- tc.act(a) }()
+			completedWhileBlocked := false
+			select {
+			case err := <-updated:
+				completedWhileBlocked = true
+				if err != nil {
+					t.Errorf("concurrent app operation: %v", err)
+				}
+			case <-time.After(time.Second):
+			}
+
+			// Always unblock the handler before waiting for library shutdown or cleanup.
+			unblock()
+			select {
+			case <-served:
+			case <-time.After(time.Second):
+				t.Error("file handler did not finish after releasing the response writer")
+			}
+			if !completedWhileBlocked {
+				select {
+				case err := <-updated:
+					if err != nil {
+						t.Errorf("concurrent app operation after stream release: %v", err)
+					}
+				case <-time.After(time.Second):
+					t.Error("app operation did not finish after releasing the response writer")
+				}
+				t.Error("app operation blocked while the file response was writing")
+			}
+			if response.Code != http.StatusPartialContent || !bytes.Equal(response.Body.Bytes(), payload[2:9]) {
+				t.Errorf("file range response = %d %q, want %d %q", response.Code, response.Body.Bytes(), http.StatusPartialContent, payload[2:9])
+			}
+		})
 	}
 }

@@ -21,29 +21,41 @@ func downloadProblem(w http.ResponseWriter, err error) {
 	problem(w, status, err)
 }
 
+// acquireDownloads keeps the library alive until the returned release is called.
+// An opened file has its own lifetime and can be streamed after releasing it.
+func (a *App) acquireDownloads(w http.ResponseWriter, r *http.Request) (*offline.Manager, func()) {
+	a.downloadMu.RLock()
+	if !a.Config().OfflineEnabled {
+		if r.Method == "GET" && r.URL.Path == "/api/downloads" {
+			writeJSON(w, 200, map[string]any{"tasks": []any{}, "storage": nil, "delivery": map[string]any{"enabled": false, "running": a.Status().Running, "hits": 0, "bytes": 0}})
+		} else {
+			problem(w, 409, errors.New("offline downloads are disabled; enable them in service settings first"))
+		}
+		a.downloadMu.RUnlock()
+		return nil, nil
+	}
+	if a.downloadErr != nil {
+		problem(w, 503, a.downloadErr)
+		a.downloadMu.RUnlock()
+		return nil, nil
+	}
+	return a.downloads, a.downloadMu.RUnlock
+}
+
 func (a *App) downloadRoutes(api *http.ServeMux) {
 	// Keep a library alive for each operation while configuration toggles it.
-	route := func(pattern string, handler http.HandlerFunc) {
+	route := func(pattern string, handler func(http.ResponseWriter, *http.Request, *offline.Manager)) {
 		api.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
-			a.downloadMu.RLock()
-			defer a.downloadMu.RUnlock()
-			if !a.Config().OfflineEnabled {
-				if r.Method == "GET" && r.URL.Path == "/api/downloads" {
-					writeJSON(w, 200, map[string]any{"tasks": []any{}, "storage": nil, "delivery": map[string]any{"enabled": false, "running": a.Status().Running, "hits": 0, "bytes": 0}})
-				} else {
-					problem(w, 409, errors.New("offline downloads are disabled; enable them in service settings first"))
-				}
+			downloads, release := a.acquireDownloads(w, r)
+			if downloads == nil {
 				return
 			}
-			if a.downloadErr != nil {
-				problem(w, 503, a.downloadErr)
-				return
-			}
-			handler(w, r)
+			defer release()
+			handler(w, r, downloads)
 		})
 	}
-	route("GET /api/downloads", func(w http.ResponseWriter, r *http.Request) {
-		storage, err := a.downloads.Storage()
+	route("GET /api/downloads", func(w http.ResponseWriter, r *http.Request, downloads *offline.Manager) {
+		storage, err := downloads.Storage()
 		if err != nil {
 			problem(w, 503, err)
 			return
@@ -53,8 +65,8 @@ func (a *App) downloadRoutes(api *http.ServeMux) {
 			LocalReady bool `json:"localReady"`
 		}
 		tasks := []taskView{}
-		for _, task := range a.downloads.List() {
-			tasks = append(tasks, taskView{task, a.downloads.CanDeliver(task.ID)})
+		for _, task := range downloads.List() {
+			tasks = append(tasks, taskView{task, downloads.CanDeliver(task.ID)})
 		}
 		status := a.Status()
 		writeJSON(w, 200, map[string]any{"tasks": tasks, "storage": storage, "delivery": map[string]any{
@@ -62,7 +74,7 @@ func (a *App) downloadRoutes(api *http.ServeMux) {
 			"hits": status.Metrics.LocalHits, "bytes": status.Metrics.LocalBytes,
 		}})
 	})
-	route("POST /api/downloads", func(w http.ResponseWriter, r *http.Request) {
+	route("POST /api/downloads", func(w http.ResponseWriter, r *http.Request, downloads *offline.Manager) {
 		var req struct {
 			URL  string `json:"url"`
 			Name string `json:"name"`
@@ -82,7 +94,7 @@ func (a *App) downloadRoutes(api *http.ServeMux) {
 				}
 			}
 		}
-		task, err := a.downloads.AddFrom(original, req.URL, req.Name)
+		task, err := downloads.AddFrom(original, req.URL, req.Name)
 		if err != nil {
 			downloadProblem(w, err)
 			return
@@ -90,23 +102,28 @@ func (a *App) downloadRoutes(api *http.ServeMux) {
 		a.log("DOWNLOAD", "", "", "已创建离线下载任务："+task.Name, "")
 		writeJSON(w, 202, task)
 	})
-	route("POST /api/downloads/{id}/{action}", func(w http.ResponseWriter, r *http.Request) {
-		task, err := a.downloads.Action(r.PathValue("id"), r.PathValue("action"))
+	route("POST /api/downloads/{id}/{action}", func(w http.ResponseWriter, r *http.Request, downloads *offline.Manager) {
+		task, err := downloads.Action(r.PathValue("id"), r.PathValue("action"))
 		if err != nil {
 			downloadProblem(w, err)
 			return
 		}
 		writeJSON(w, 200, task)
 	})
-	route("DELETE /api/downloads/{id}", func(w http.ResponseWriter, r *http.Request) {
-		if err := a.downloads.Delete(r.PathValue("id")); err != nil {
+	route("DELETE /api/downloads/{id}", func(w http.ResponseWriter, r *http.Request, downloads *offline.Manager) {
+		if err := downloads.Delete(r.PathValue("id")); err != nil {
 			downloadProblem(w, err)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
-	route("GET /api/downloads/{id}/file", func(w http.ResponseWriter, r *http.Request) {
-		f, task, err := a.downloads.OpenCompleted(r.PathValue("id"))
+	api.HandleFunc("GET /api/downloads/{id}/file", func(w http.ResponseWriter, r *http.Request) {
+		downloads, release := a.acquireDownloads(w, r)
+		if downloads == nil {
+			return
+		}
+		f, task, err := downloads.OpenCompleted(r.PathValue("id"))
+		release()
 		if err != nil {
 			downloadProblem(w, err)
 			return
