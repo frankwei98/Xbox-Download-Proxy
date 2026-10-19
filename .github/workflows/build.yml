@@ -4,21 +4,21 @@ on:
   pull_request:
   push:
     branches:
-      - '**'
+      - main
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
 
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
-    name: Test on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
+    name: Test on macOS (arm64)
+    runs-on: macos-15
     steps:
       - name: Check out source
         uses: actions/checkout@v7
@@ -37,7 +37,9 @@ jobs:
           node-version: '24'
 
       - name: Test Go with race detection and coverage
-        run: go test -race -count=1 -coverprofile=coverage.out -covermode=atomic ./...
+        run: |
+          test "$(go env GOARCH)" = arm64
+          go test -race -count=1 -coverprofile=coverage.out -covermode=atomic ./...
 
       - name: Vet Go
         run: go vet ./...
@@ -53,19 +55,23 @@ jobs:
       - name: Upload coverage
         uses: actions/upload-artifact@v7
         with:
-          name: coverage-${{ matrix.os }}
+          name: coverage-macos-arm64
           path: coverage.out
           if-no-files-found: error
 
   build:
     name: ${{ matrix.goos }}-${{ matrix.goarch }}
-    needs: test
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        goos: [linux, darwin]
-        goarch: [amd64, arm64]
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: arm64
     env:
       RELEASE_TAG: ${{ github.ref_name }}
       GOOS: ${{ matrix.goos }}
@@ -103,9 +109,79 @@ jobs:
             xdp-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz.sha256
           if-no-files-found: error
 
+  linux-install:
+    name: Test and install on ${{ matrix.image }} (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: alpine:3.23
+            manager: openrc
+            arch: arm64
+            runner: ubuntu-24.04-arm
+            source: '1'
+          - image: debian:13-slim
+            manager: systemd
+            arch: amd64
+            runner: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.27.2'
+          cache: false
+      - name: Check shell scripts
+        run: shellcheck setup.sh scripts/setup_test.sh scripts/install-service.sh scripts/setup_smoke_test.sh
+      - name: Build static test binary
+        run: CGO_ENABLED=0 go build -trimpath -o "$RUNNER_TEMP/xdp" ./cmd/xdp
+      - name: Locate Go toolchain
+        run: |
+          echo "TEST_GOROOT=$(go env GOROOT)" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/coverage"
+      - name: Test installer and service integration
+        env:
+          TEST_IMAGE: ${{ matrix.image }}
+          TEST_MANAGER: ${{ matrix.manager }}
+          TEST_ARCH: ${{ matrix.arch }}
+          XDP_TEST_SOURCE_BUILD: ${{ matrix.source }}
+        run: |
+          docker run --rm \
+            --platform "linux/$TEST_ARCH" \
+            --mount "type=bind,source=$PWD,target=/src,readonly" \
+            --mount "type=bind,source=$RUNNER_TEMP/xdp,target=/test-xdp,readonly" \
+            --mount "type=bind,source=$TEST_GOROOT,target=/opt/go,readonly" \
+            --mount "type=bind,source=$RUNNER_TEMP/coverage,target=/coverage" \
+            --env GOROOT=/opt/go --env GOTOOLCHAIN=local \
+            --env XDP_SETUP_TEST_CONTAINER=1 --env XDP_TEST_BINARY=/test-xdp \
+            --env XDP_TEST_SOURCE_BUILD \
+            --env TEST_MANAGER --env TEST_ARCH "$TEST_IMAGE" sh -ec '
+              if [ "$TEST_MANAGER" = openrc ]; then
+                apk add --no-cache openrc build-base ca-certificates
+              else
+                apt-get update
+                apt-get install -y --no-install-recommends systemd gcc libc6-dev ca-certificates
+              fi
+              export PATH="/opt/go/bin:$PATH"
+              cd /src
+              test "$(go env GOARCH)" = "$TEST_ARCH"
+              go test -race -count=1 -coverprofile=/coverage/coverage.out -covermode=atomic ./...
+              go vet ./...
+              sh /src/scripts/setup_test.sh
+              sh /src/scripts/setup_smoke_test.sh
+            '
+      - name: Upload coverage
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-linux-${{ matrix.arch }}
+          path: ${{ runner.temp }}/coverage/coverage.out
+          if-no-files-found: error
+
   release:
     name: Publish GitHub Release
-    needs: build
+    needs: [test, build, linux-install]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:
@@ -130,13 +206,11 @@ jobs:
         run: |
           set -euo pipefail
           cd release
-          for os in linux darwin; do
-            for arch in amd64 arm64; do
-              package="xdp-${RELEASE_TAG}-${os}-${arch}.tar.gz"
-              checksum="${package}.sha256"
-              test -f "$package"
-              test -f "$checksum"
-            done
+          for target in linux-amd64 linux-arm64 darwin-arm64; do
+            package="xdp-${RELEASE_TAG}-${target}.tar.gz"
+            checksum="${package}.sha256"
+            test -f "$package"
+            test -f "$checksum"
           done
           sha256sum -c ./*.sha256
 
