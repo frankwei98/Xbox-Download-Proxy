@@ -142,7 +142,7 @@ make vet    # go vet
 make dist   # Linux/macOS amd64/arm64 交叉构建到 dist/
 ```
 
-推送符合 `v主版本.次版本.修订版本` 格式的 tag（例如 `v0.1.0`）会触发 GitHub Actions，为 Linux 和 macOS 分别构建 amd64、arm64 版本。每个目标会生成 `xdp-<tag>-<系统>-<架构>.tar.gz` 压缩包及对应的 `.sha256` 校验文件；arm64 也称 aarch64。可在仓库的 Actions 页面打开对应构建并下载各目标的 artifact。
+普通分支 push 会在 GitHub Actions 中构建验证，不打包或上传产物。推送符合 `v主版本.次版本.修订版本` 格式的 tag（例如 `v0.1.0`）会为 Linux 和 macOS 分别构建 amd64、arm64 版本；四个平台全部构建成功后，Actions 会自动创建或更新同名 GitHub Release，并附上四个 `xdp-<tag>-<系统>-<架构>.tar.gz` 压缩包及对应的 `.sha256` 校验文件。arm64 也称 aarch64。tag 构建仍会将各目标作为 artifact 保留，可在仓库的 Actions 页面下载。重新运行同一 tag 的工作流会更新该 Release 中的对应资产。
 
 ```sh
 git tag v0.1.0
