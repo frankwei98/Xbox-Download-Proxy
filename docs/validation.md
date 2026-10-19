@@ -45,9 +45,18 @@
 - Playwright / headless Chromium 连接本地高端口实例，验证默认关闭、WebUI 启用与服务未启动提示、实际 HTTP Range 内容与 57 字节计数、日志“加入离线下载”预填、关闭后文件保留和 375px 布局；无页面 JavaScript 异常。完成文件为预置 fixture，未连接真实游戏下载 CDN。
 - 在临时目录实际执行 native 安装的开启、保留选择、关闭、再次保留选择，确认 `offlineEnabled`、token 和 `autoStart`，尚未运行时不创建下载库。
 
+## Debian / Alpine 安装兼容验证（2026-10-19）
+
+- 安装入口、启动脚本和安装测试改用 POSIX `/bin/sh`，通过语法检查、ShellCheck、`make test-setup`；不再依赖 Bash 或假定 `/usr/bin` 中没有 Go。完整 Go 测试、`go vet` 和节点筛选测试通过。
+- Debian 12 amd64、Debian 13 arm64、Alpine 3.22 amd64、Alpine 3.24 arm64 临时容器中运行安装测试及真实预编译安装：显式安装证书但不安装 Go、配置/token 保留、管理 API 鉴权、默认关闭加速服务、启动标准低端口，以及运行中替换二进制。安装路径包含空格、引号、美元符号和 `%`。
+- Alpine 3.23 arm64 的新环境通过 `--install-deps` 自动安装证书及 Go 1.25.10，从源码构建、初始化并启动服务。仓库根目录存在不可在 Linux 执行的 macOS 二进制时，会安装 Go 并重新构建。`readelf` 确认产物没有动态解释器。
+- Alpine 3.22 / 3.23 / 3.24 使用真实 OpenRC 工具和容器内运行状态 fixture，验证注册、开机启动链接、服务启动/停止/重启、运行中升级及管理 API；日志目录/文件限制为 0700/0600。fixture 不代表完整启动过 Alpine VM 或 LXC。
+- Debian 12 / 13 使用真实 systemd 工具验证 unit 语法、特殊路径转义和离线启用。未运行 init 的容器中，`--start` 会在注册服务之前明确拒绝；没有把 `systemctl` 已安装等同于 systemd 正在运行。
+- 新增 Installer CI，覆盖 Debian 12/13、Alpine 3.22/3.23，包含 Alpine 源码安装路径。CI 配置已写入仓库，尚未在远端执行。
+
 ## 尚未验证
 
-- 当前环境 Docker daemon 未运行，因此没有完成镜像构建、容器启动或 NAS 安装验证。
+- 尚未进行真实 VM/LXC 的完整开机自启、systemd 在线服务启停及 NAS 安装验证。上面的安装验证使用临时 Docker 容器，未修改宿主机 DNS、防火墙或系统服务；不等于已验收项目 Dockerfile/Compose 的正式部署流程。
 - 未进行 Xbox 主机、Windows Xbox App 或 Microsoft Store 的实际下载、断点续传及优选收益测试；由用户按 [手工验收清单](manual-test.md) 自行验证。
 - 候选 IP 列表和默认测速资源的大陆网络可达性及每个实际游戏的 CDN 缓存命中，不属于本地 fixture 测试可证明的事实。
 

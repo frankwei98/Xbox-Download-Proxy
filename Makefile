@@ -7,7 +7,7 @@ test-ui:
 	node --test scripts/node-selection.test.mjs
 
 test-setup:
-	bash scripts/setup_test.sh
+	sh scripts/setup_test.sh
 
 build:
 	CGO_ENABLED=0 go build -trimpath -o xdp ./cmd/xdp

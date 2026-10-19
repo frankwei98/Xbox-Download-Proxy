@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/sh
 # Install Xbox Download Proxy locally without changing host networking or privileges.
 set -eu
 
@@ -14,6 +14,8 @@ Options:
   --lan-ip IPv4          LAN IPv4 address used by the service (required)
   --web-port PORT        Web/API port (default: 8080)
   --offline yes|no       Enable or disable offline downloads and Xbox local delivery
+  --binary PATH          Install this prebuilt xdp instead of compiling (low-memory hosts)
+  --install-deps         Install native dependencies with apk/apt-get (requires root)
   --start                In Compose mode, start Web/API after initialization
   --yes                  Allow replacing generated files and binaries
   --help                 Show this help
@@ -21,6 +23,8 @@ Options:
 Native mode builds current sources with Go, or uses an existing ./xdp if Go is unavailable. Compose mode needs
 the Docker Compose plugin (`docker compose`). Compose initializes data but does
 not start DNS/HTTP services; --start starts only the Web/API container.
+Linux native installs also generate OpenRC/systemd definitions and install-service.sh.
+Run that helper separately as root to enable a system service. No Bash is needed.
 EOF
 }
 
@@ -37,6 +41,8 @@ yes=0
 start=0
 offline=
 offline_set=0
+prebuilt=
+install_deps=0
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -45,6 +51,8 @@ while [ "$#" -gt 0 ]; do
     --lan-ip) [ "$#" -ge 2 ] || fail "--lan-ip requires a value"; lan_ip=$2; shift 2 ;;
     --web-port) [ "$#" -ge 2 ] || fail "--web-port requires a value"; web_port=$2; web_port_set=1; shift 2 ;;
     --offline) [ "$#" -ge 2 ] || fail "--offline requires yes or no"; offline=$2; offline_set=1; shift 2 ;;
+    --binary) [ "$#" -ge 2 ] && [ -n "$2" ] || fail "--binary requires a path"; prebuilt=$2; shift 2 ;;
+    --install-deps) install_deps=1; shift ;;
     --yes) yes=1; shift ;;
     --start) start=1; shift ;;
     --help|-h) usage; exit 0 ;;
@@ -67,6 +75,9 @@ if [ -z "$mode" ]; then
   mode=${answer:-native}
 fi
 case "$mode" in native|compose) ;; *) fail "mode must be native or compose" ;; esac
+if [ "$mode" = compose ] && { [ -n "$prebuilt" ] || [ "$install_deps" -eq 1 ]; }; then
+  fail "--binary and --install-deps are only supported in native mode"
+fi
 if [ "$has_tty" -eq 1 ] && [ "$offline_set" -eq 0 ]; then
   printf 'Enable offline downloads and Xbox local delivery? [y/N; Enter keeps existing setting]: '
   IFS= read -r answer || true
@@ -133,6 +144,27 @@ if [ "$has_tty" -eq 1 ] && [ "$mode" = compose ] && [ "$start" -eq 0 ]; then
 fi
 
 script_dir=$(CDPATH='' cd -- "$(dirname "$0")" && pwd -P)
+os=$(uname -s)
+if [ "$install_deps" -eq 1 ]; then
+  [ "$os" = Linux ] || fail "--install-deps supports Debian and Alpine Linux only"
+  [ "$(id -u)" -eq 0 ] || fail "--install-deps requires root; rerun explicitly with su, sudo or doas"
+  need_go=0
+  if [ -z "$prebuilt" ] && ! command -v go >/dev/null 2>&1; then
+    if [ ! -x "$script_dir/xdp" ] || ! "$script_dir/xdp" --version >/dev/null 2>&1; then need_go=1; fi
+  fi
+  if command -v apk >/dev/null 2>&1; then
+    set -- ca-certificates
+    [ "$need_go" -eq 0 ] || set -- "$@" go
+    apk add --no-cache "$@" || fail "Alpine dependency installation failed"
+  elif command -v apt-get >/dev/null 2>&1; then
+    set -- ca-certificates
+    [ "$need_go" -eq 0 ] || set -- "$@" golang-go
+    apt-get update || fail "Debian package index update failed"
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$@" || fail "Debian dependency installation failed"
+  else
+    fail "--install-deps needs Alpine apk or Debian apt-get"
+  fi
+fi
 [ -n "$install_dir" ] || fail "installation directory must not be empty"
 case "$install_dir" in /*) ;; *) install_dir=$(pwd -P)/$install_dir ;; esac
 mkdir -p "$install_dir"
@@ -160,40 +192,106 @@ if [ "$mode" = native ]; then
   start_script=$install_dir/start.sh
   confirm_replace "$binary"
   confirm_replace "$start_script"
-  if command -v go >/dev/null 2>&1; then
-    (cd "$script_dir" && go build -o "$binary" ./cmd/xdp) || fail "Go build failed"
-  elif [ -x "$script_dir/xdp" ]; then
-    cp "$script_dir/xdp" "$binary"
-  else
-    fail "native install needs Go on PATH or an executable xdp binary in the repository root"
+  if [ "$os" = Linux ]; then
+    [ -f "$script_dir/scripts/install-service.sh" ] || fail "missing scripts/install-service.sh; use a complete repository checkout"
+    for generated in xdp.service xdp.openrc install-service.sh; do confirm_replace "$install_dir/$generated"; done
+    # Service definitions are line-oriented. Shell launchers still support spaces and quotes.
+    cr=$(printf '\r')
+    tab=$(printf '\t')
+    case "$install_dir" in *'
+'*|*"$cr"*|*"$tab"*) fail "installation path cannot contain line breaks or tabs" ;; esac
   fi
-  chmod 755 "$binary"
+  staged=$(mktemp "$install_dir/.xdp.XXXXXX")
+  trap 'rm -f "$staged"' EXIT
+  trap 'exit 1' HUP INT TERM
+  if [ -n "$prebuilt" ]; then
+    [ -f "$prebuilt" ] && [ -r "$prebuilt" ] || fail "cannot read --binary file: $prebuilt"
+    cp "$prebuilt" "$staged" || fail "could not copy prebuilt binary"
+  elif command -v go >/dev/null 2>&1; then
+    go_version=$(GOTOOLCHAIN=local go version) || fail "could not run Go; use Go >= 1.24 or --binary PATH"
+    case "$go_version" in
+      *' go1.'*)
+        minor=${go_version#* go1.}; minor=${minor%%[!0-9]*}
+        [ -n "$minor" ] && [ "$minor" -ge 24 ] || fail "Go >= 1.24 is required ($go_version); distribution packages may be older. Use --binary PATH or install a newer Go toolchain"
+        ;;
+      *' go2.'*|*' devel '*) ;;
+      *) fail "cannot determine Go version: $go_version" ;;
+    esac
+    (cd "$script_dir" && CGO_ENABLED=0 go build -trimpath -o "$staged" ./cmd/xdp) || fail "Go build failed; on low-memory containers use --binary PATH"
+  elif [ -x "$script_dir/xdp" ]; then
+    cp "$script_dir/xdp" "$staged"
+  else
+    fail "native install needs Go >= 1.24 or a prebuilt xdp; use --binary PATH (recommended on small containers), or --install-deps as root on Debian/Alpine"
+  fi
+  chmod 755 "$staged"
+  "$staged" --version >/dev/null 2>&1 || fail "binary cannot run on $(uname -s)/$(uname -m); select the matching Linux/macOS amd64/arm64 build"
+  # Replacing by rename also works while an earlier executable is running on Linux.
+  mv -f "$staged" "$binary"
   if [ "$offline_set" -eq 1 ]; then
     "$binary" init --data-dir "$install_dir/data" "--offline=$offline"
   else
     "$binary" init --data-dir "$install_dir/data"
   fi
 
-  {
-    printf '#!/usr/bin/env bash\nset -eu\nexec '
-    quote_sh "$binary"
-    printf ' serve --data-dir '
+  native_args() {
+    printf 'serve --data-dir '
     quote_sh "$install_dir/data"
     printf ' --lan-ip '
     quote_sh "$lan_ip"
     printf ' --web '
     quote_sh ":$web_port"
-    printf '\n'
+  }
+  {
+    printf '#!/bin/sh\nset -eu\nexec '
+    quote_sh "$binary"
+    printf ' '
+    native_args
+    printf ' "$@"\n'
   } > "$start_script"
   chmod 755 "$start_script"
+  if [ "$os" = Linux ]; then
+    # systemd performs its own percent/dollar substitutions even inside quoted arguments.
+    systemd_path=$(printf '%s' "$start_script" | sed 's/\\/\\\\/g; s/"/\\"/g; s/%/%%/g; s/\$/$$/g')
+    {
+      printf '[Unit]\nDescription=Xbox Download Proxy\nWants=network-online.target\nAfter=network-online.target\n\n[Service]\nType=simple\n'
+      printf 'ExecStart=/bin/sh "%s"\n' "$systemd_path"
+      printf 'Restart=on-failure\nRestartSec=3\nUMask=0077\n\n[Install]\nWantedBy=multi-user.target\n'
+    } > "$install_dir/xdp.service"
+    # These variables are expanded by openrc-run, not by this installer.
+    # shellcheck disable=SC2016
+    {
+      printf '#!/sbin/openrc-run\n\ndescription="Xbox Download Proxy"\numask 077\nsupervisor=supervise-daemon\ncommand=/bin/sh'
+      printf '\ncommand_args='
+      quote_sh "$(quote_sh "$start_script")"
+      printf '\nrespawn_delay=3\npidfile="/run/${RC_SVCNAME}.pid"\nlog_path='
+      quote_sh "$install_dir/logs/xdp.log"
+      # OpenRC evaluates these fields as shell words when starting supervise-daemon.
+      printf '\noutput_log='
+      quote_sh "$(quote_sh "$install_dir/logs/xdp.log")"
+      printf '\nerror_log="$output_log"\n\ndepend() {\n  use net\n  after firewall\n}\n\nstart_pre() {\n  checkpath --directory --mode 0700 '
+      quote_sh "$install_dir/logs"
+      printf '\n  checkpath --file --mode 0600 "$log_path"\n}\n'
+    } > "$install_dir/xdp.openrc"
+    cp "$script_dir/scripts/install-service.sh" "$install_dir/install-service.sh"
+    chmod 755 "$install_dir/xdp.openrc" "$install_dir/install-service.sh"
+  fi
   printf '\nInstalled native xdp.\nStart Web/API with: '
   quote_sh "$start_script"
   printf '\n'
   printf 'Offline downloads and Xbox local delivery: configured (new installations default to disabled).\n'
   printf 'Web UI: http://%s:%s\n' "$lan_ip" "$web_port"
-  printf 'If low-port permissions prevent starting download services, stop the running Web/API (Ctrl+C), then retry manually with: sudo '
-  quote_sh "$start_script"
-  printf '\nSetup never runs sudo automatically.\n'
+  if [ "$(id -u)" -ne 0 ]; then
+    printf 'Binding DNS/HTTP/TLS low ports needs permission. Stop the foreground server before restarting as root (su, sudo or doas).\n'
+  fi
+  if [ "$os" = Linux ]; then
+    printf 'Optional systemd/OpenRC service: as root run '
+    quote_sh "$install_dir/install-service.sh"
+    printf ' --start\nNo system service has been installed or enabled by setup.\n'
+    if [ ! -s /etc/ssl/certs/ca-certificates.crt ] && [ ! -s /etc/ssl/cert.pem ]; then
+      printf 'Warning: CA certificates are missing; HTTPS candidate sources need ca-certificates. Rerun with --install-deps as root.\n'
+    fi
+  fi
+  printf 'Setup never runs privilege escalation or changes DNS/firewall settings.\n'
   if [ -r "$install_dir/data/token" ]; then
     printf 'Management token: '
     cat "$install_dir/data/token"
@@ -217,15 +315,15 @@ confirm_replace "$compose_file"
 yaml_quote() {
   value=$1
   escaped=
-  i=0
-  while [ "$i" -lt "${#value}" ]; do
-    char=${value:$i:1}
+  while [ -n "$value" ]; do
+    rest=${value#?}
+    char=${value%"$rest"}
+    value=$rest
     case "$char" in
       "'") escaped="$escaped''" ;;
       '$') escaped="${escaped}\$\$" ;;
       *) escaped="$escaped$char" ;;
     esac
-    i=$((i + 1))
   done
   printf "'%s'" "$escaped"
 }
