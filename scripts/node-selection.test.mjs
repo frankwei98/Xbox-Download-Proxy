@@ -53,3 +53,45 @@ test('recommendation uses only successful, finite, positive throughput', () => {
   assert.equal(bestResult(results.slice(0, 3)), null);
   assert.equal(bestResult([]), null);
 });
+
+test('sampling handles empty, unmatched, and unusual budget values', () => {
+  const source = Array.from({ length: 140 }, (_, index) => ({ ip: `10.0.0.${index}`, location: '广东 联通' }));
+  assert.deepEqual(selectForTest([], {}, 4), []);
+  assert.deepEqual(selectForTest(source, { province: '新疆' }), []);
+  assert.equal(selectForTest(source, {}, 1).length, 1);
+  assert.equal(selectForTest(source, {}, 3.9).length, 3);
+  assert.equal(selectForTest(source, {}, 0).length, 16); // Falsy budgets use the default of 16.
+  assert.equal(selectForTest(source, {}, -2).length, 1);
+  assert.equal(selectForTest(source, {}, Number.NaN).length, 16);
+  assert.equal(selectForTest(source, {}, Number.POSITIVE_INFINITY).length, 128);
+});
+
+test('filtering happens before IP deduplication and sampling leaves input unchanged', () => {
+  const input = [
+    { ip: '10.1.0.1', location: '广西 联通' },
+    { ip: '10.1.0.1', location: '广东 联通' },
+    { ip: '10.1.0.2', location: '广东 联通' },
+    { ip: '10.1.0.3', location: '广东 电信' }
+  ];
+  const before = structuredClone(input);
+  const selected = selectForTest(input, { province: '广东', carrier: '联通' });
+  assert.deepEqual(selected.map(item => item.ip), ['10.1.0.1', '10.1.0.2']);
+  assert.equal(selected[0].location, '广东 联通');
+  assert.deepEqual(input, before);
+});
+
+test('best result rejects invalid throughput and resolves ties without mutating input', () => {
+  const results = [
+    { ip: 'nan', mbps: Number.NaN, latencyMS: 1 },
+    { ip: 'negative', mbps: -1, latencyMS: 1 },
+    { ip: 'string', mbps: '100', latencyMS: 1 },
+    { ip: 'failed', mbps: 100, error: 'request failed', latencyMS: 1 },
+    { ip: 'tie-first', mbps: 12, latencyMS: 5 },
+    { ip: 'faster-tie', mbps: 12, latencyMS: 2 },
+    { ip: 'stable-tie', mbps: 12, latencyMS: 2 }
+  ];
+  const before = structuredClone(results);
+  assert.equal(bestResult(results).ip, 'faster-tie');
+  assert.deepEqual(results, before);
+  assert.equal(bestResult(results.slice(0, 4)), null);
+});

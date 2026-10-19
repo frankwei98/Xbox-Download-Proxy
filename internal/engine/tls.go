@@ -92,7 +92,7 @@ func helloSNI(b []byte) (string, error) {
 				}
 				if kind == 0 {
 					name := CleanHost(string(data[q : q+length]))
-					if len(name) > 253 {
+					if len(name) == 0 || len(name) > 253 {
 						return "", fail
 					}
 					return name, nil

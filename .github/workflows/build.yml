@@ -1,6 +1,7 @@
 name: Build
 
 on:
+  pull_request:
   push:
     branches:
       - '**'
@@ -11,8 +12,54 @@ permissions:
   contents: read
 
 jobs:
+  test:
+    name: Test on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      - name: Test Go with race detection and coverage
+        run: go test -race -count=1 -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: Vet Go
+        run: go vet ./...
+
+      - name: Test frontend logic and check JavaScript syntax
+        run: |
+          make test-ui
+          node --check internal/app/web/app.js
+
+      - name: Test installer mocks
+        run: make test-setup
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-${{ matrix.os }}
+          path: coverage.out
+          if-no-files-found: error
+
   build:
     name: ${{ matrix.goos }}-${{ matrix.goarch }}
+    needs: test
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false

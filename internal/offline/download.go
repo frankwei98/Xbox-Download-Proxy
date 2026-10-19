@@ -172,7 +172,7 @@ func (m *Manager) transfer(ctx context.Context, id string) (result error) {
 				m.writeMu.Unlock()
 				return err
 			}
-			if space.AvailableBytes <= ReserveBytes+uint64(n) {
+			if space.AvailableBytes < ReserveBytes+uint64(n) {
 				m.writeMu.Unlock()
 				return ErrSpace
 			}

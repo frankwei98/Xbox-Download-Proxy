@@ -1,7 +1,17 @@
-.PHONY: test test-ui test-setup build vet dist clean
+.PHONY: test test-race test-cover test-ui test-setup check build vet dist clean
 
 test:
 	go test ./...
+
+test-race:
+	go test -race -count=1 ./...
+
+test-cover:
+	go test -race -count=1 -coverprofile=/tmp/xdp-coverage.out -covermode=atomic ./...
+	go tool cover -func=/tmp/xdp-coverage.out
+
+check: test-race test-ui test-setup vet
+	node --check internal/app/web/app.js
 
 test-ui:
 	node --test scripts/node-selection.test.mjs

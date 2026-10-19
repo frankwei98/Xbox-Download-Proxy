@@ -188,13 +188,16 @@ curl -H "Authorization: Bearer $XDP_TOKEN" \
 ```sh
 make build  # 本机可执行文件 ./xdp
 make test   # Go 测试
+make test-race # Go 竞态检查，禁用测试缓存
+make test-cover # 竞态检查及语句覆盖率报告，写入 /tmp/xdp-coverage.out
 make test-ui # 节点筛选 / 推荐逻辑测试（需要 Node.js 18+）
 make test-setup # 安装脚本 mock 测试（无需真实安装或 Docker）
 make vet    # go vet
+make check  # 竞态测试、前端逻辑、安装脚本、go vet 与 JavaScript 语法检查
 make dist   # Linux/macOS amd64/arm64 交叉构建到 dist/
 ```
 
-普通分支 push 会在 GitHub Actions 中构建验证，不打包或上传产物。推送符合 `v主版本.次版本.修订版本` 格式的 tag（例如 `v0.1.0`）会为 Linux 和 macOS 分别构建 amd64、arm64 版本；四个平台全部构建成功后，Actions 会自动创建或更新同名 GitHub Release，并附上四个 `xdp-<tag>-<系统>-<架构>.tar.gz` 压缩包及对应的 `.sha256` 校验文件。arm64 也称 aarch64。tag 构建仍会将各目标作为 artifact 保留，可在仓库的 Actions 页面下载。重新运行同一 tag 的工作流会更新该 Release 中的对应资产。
+Pull request 和分支/tag push 会先在 GitHub Actions 的 Linux、macOS 环境执行 Go 竞态与覆盖率测试、`go vet`、前端逻辑和安装脚本 mock 检查，并上传覆盖率报告。测试通过后再构建。普通分支和 pull request 不打包构建产物。推送符合 `v主版本.次版本.修订版本` 格式的 tag（例如 `v0.1.0`）会为 Linux 和 macOS 分别构建 amd64、arm64 版本；四个平台全部构建成功后，Actions 会自动创建或更新同名 GitHub Release，并附上四个 `xdp-<tag>-<系统>-<架构>.tar.gz` 压缩包及对应的 `.sha256` 校验文件。arm64 也称 aarch64。tag 构建仍会将各目标作为 artifact 保留，可在仓库的 Actions 页面下载。重新运行同一 tag 的工作流会更新该 Release 中的对应资产。
 
 ```sh
 git tag v0.1.0
