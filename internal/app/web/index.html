@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Xbox Download Proxy</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <div class="login-screen" id="loginScreen" hidden>
+    <form class="login-panel" id="loginForm">
+      <div class="brand-mark" aria-hidden="true">X</div>
+      <h1>连接到管理界面</h1>
+      <p>输入加速服务端访问令牌。令牌仅保存在当前浏览器会话中。</p>
+      <label for="tokenInput">访问令牌</label>
+      <input id="tokenInput" type="password" autocomplete="current-password" required>
+      <button class="button primary" type="submit">连接</button>
+      <div class="notice error" id="loginError" role="alert" hidden></div>
+    </form>
+  </div>
+
+  <div class="app-shell" id="appShell" hidden>
+    <header class="topbar">
+      <a class="brand" href="#service" aria-label="Xbox Download Proxy 服务">
+        <span class="brand-mark" aria-hidden="true">X</span>
+        <span class="brand-name">Xbox Download Proxy</span>
+      </a>
+      <div class="topbar-right">
+        <span class="service-state" id="serviceState"><i class="state-dot"></i><span>正在读取</span></span>
+        <button class="button primary compact" id="serviceToggle" type="button" disabled>启动服务</button>
+      </div>
+    </header>
+
+    <div class="layout">
+      <nav class="nav-tabs" aria-label="主导航" role="tablist">
+        <button class="nav-tab active" role="tab" aria-selected="true" data-page="service">服务</button>
+        <button class="nav-tab" role="tab" aria-selected="false" data-page="speed">测速</button>
+        <button class="nav-tab" role="tab" aria-selected="false" data-page="downloads">离线下载</button>
+        <button class="nav-tab" role="tab" aria-selected="false" data-page="logs">请求日志</button>
+        <button class="nav-tab" role="tab" aria-selected="false" data-page="help">使用帮助</button>
+        <div class="nav-foot"><span class="live-indicator"></span>本机管理界面</div>
+      </nav>
+
+      <main id="mainContent">
+        <div class="notice error" id="globalError" role="alert" hidden></div>
+        <div class="notice success" id="globalNotice" role="status" hidden></div>
+        <section class="page active" id="page-service" aria-labelledby="serviceTitle">
+          <div class="page-heading">
+            <div><h1 id="serviceTitle">服务</h1><p>查看运行情况，管理局域网服务和下载节点。</p></div>
+            <span class="updated-label" id="statusUpdated">等待状态</span>
+          </div>
+          <div class="metric-grid" aria-label="服务统计">
+            <article class="metric"><span>DNS 请求</span><strong class="metric-number" id="metricDns">—</strong><small>服务启动以来</small></article>
+            <article class="metric"><span>HTTP 重定向</span><strong class="metric-number" id="metricHttp">—</strong><small>服务启动以来</small></article>
+            <article class="metric"><span>TLS 连接</span><strong class="metric-number" id="metricTls">—</strong><small>服务启动以来</small></article>
+            <article class="metric metric-address"><span>局域网地址</span><strong class="metric-mono" id="metricAddress">—</strong><small>下载客户端使用此地址</small></article>
+          </div>
+
+          <form id="configForm" class="panel config-panel">
+            <div class="panel-heading"><div><h2>网络与监听</h2><p>填写绑定地址与端口；TLS 监听留空可关闭 HTTPS 转发。</p></div><span class="config-state" id="configState">读取中</span></div>
+            <div class="form-grid">
+              <label class="field"><span>局域网 IP</span><input name="lanIP" autocomplete="off" placeholder="例如 192.168.1.20"></label>
+              <label class="field"><span>上游 DNS</span><input name="upstreamDNS" autocomplete="off" placeholder="例如 1.1.1.1:53"></label>
+              <label class="field"><span>DNS 监听</span><input name="dnsListen" autocomplete="off" placeholder=":53"></label>
+              <label class="field"><span>HTTP 监听</span><input name="httpListen" autocomplete="off" placeholder=":80"></label>
+              <label class="field"><span>TLS 监听</span><input name="tlsListen" autocomplete="off" placeholder=":443"></label>
+              <label class="field"><span>Web 管理监听</span><input name="webListen" autocomplete="off" placeholder=":8080"></label>
+            </div>
+            <div class="divider"></div>
+            <div class="panel-heading small-heading"><div><h2>指定下载 IP</h2><p>为空时使用该组的默认选择或上游解析。</p></div></div>
+            <div class="form-grid group-grid">
+              <label class="field"><span>Xbox 全球</span><input name="groups.global.ip" autocomplete="off" placeholder="留空可跳转国内域名"></label>
+              <label class="field"><span>Xbox 国内主下载（cn1）</span><input name="groups.cn1.ip" autocomplete="off" placeholder="留空使用上游 DNS"></label>
+              <label class="field"><span>Xbox 国内旧下载（cn2）</span><input name="groups.cn2.ip" autocomplete="off" placeholder="留空使用上游 DNS"></label>
+              <label class="field"><span>Microsoft Store</span><input name="groups.store.ip" autocomplete="off" placeholder="留空使用上游 DNS"></label>
+            </div>
+            <div class="divider"></div>
+            <div class="panel-heading small-heading"><div><h2>候选源地址</h2><p>配置 HTTPS 文本列表来源；留空时使用缓存、手动导入或 DNS 发现。</p></div></div>
+            <div class="form-grid source-grid">
+              <label class="field"><span>全局候选源</span><input name="groups.global.sourceURL" type="url" autocomplete="url" placeholder="默认来源"></label>
+              <label class="field"><span>cn1 候选源</span><input name="groups.cn1.sourceURL" type="url" autocomplete="url" placeholder="默认来源"></label>
+              <label class="field"><span>cn2 候选源</span><input name="groups.cn2.sourceURL" type="url" autocomplete="url" placeholder="默认来源"></label>
+              <label class="field"><span>Microsoft Store 候选源</span><input name="groups.store.sourceURL" type="url" autocomplete="url" placeholder="默认来源"></label>
+            </div>
+            <div class="divider"></div>
+            <div class="panel-heading small-heading"><div><h2>测速限制</h2><p>限制每个测试任务的时间、流量和并发连接数。</p></div></div>
+            <div class="form-grid test-config-grid">
+              <label class="field"><span>单节点超时（秒）</span><input name="test.timeoutSeconds" type="number" min="1" max="30" step="1"></label>
+              <label class="field"><span>单节点最大下载量（字节）</span><input name="test.maxBytes" type="number" min="1024" max="52428800" step="1"></label>
+              <label class="field"><span>并发数</span><input name="test.concurrency" type="number" min="1" max="8" step="1"></label>
+            </div>
+            <div class="divider"></div>
+            <div class="option-list">
+              <label class="check-row"><input type="checkbox" name="showLinks"><span><b>显示下载链接</b><small>在请求日志中显示完整请求链接。</small></span></label>
+              <label class="check-row"><input type="checkbox" name="redirectToCN"><span><b>优先使用中国节点</b><small>在适用时使用中国区域下载节点。</small></span></label>
+              <label class="check-row"><input type="checkbox" name="suppressAAAA"><span><b>下载域名优先 IPv4</b><small>只对受支持的下载域名返回空 AAAA 答复，其他域名正常转发。</small></span></label>
+            </div>
+            <div class="form-actions"><span class="muted" id="restartHint"></span><button class="button primary" id="saveConfig" type="submit">保存设置</button></div>
+          </form>
+        </section>
+
+        <section class="page" id="page-speed" aria-labelledby="speedTitle" hidden>
+          <div class="page-heading"><div><h1 id="speedTitle">下载节点测速</h1><p>选择候选地址并比较实际下载表现，再手动应用合适的节点。</p></div></div>
+          <div class="panel speed-controls">
+            <div class="control-row">
+              <label class="field inline-field"><span>下载域名组</span><select id="speedGroup"><option value="global">全局</option><option value="cn1">cn1</option><option value="cn2">cn2</option><option value="store">Microsoft Store</option></select></label>
+              <button class="button secondary" id="loadCandidates" type="button">加载候选</button>
+              <button class="button secondary" id="refreshCandidates" type="button">在线更新</button>
+              <details class="import-details"><summary>手动导入</summary><div class="import-box"><label for="importText">每行一个 IP，可附带空格和位置说明</label><textarea id="importText" rows="4" placeholder="203.0.113.10 上海 / 联通"></textarea><button class="button secondary" id="importCandidates" type="button">导入候选</button></div></details>
+            </div>
+            <div class="candidate-meta"><span id="candidateSummary">尚未加载候选地址</span><span id="candidateWarning" class="warning-text"></span></div>
+            <div class="filter-row">
+              <label class="search-field"><span class="sr-only">搜索地区或运营商</span><svg aria-hidden="true" viewBox="0 0 20 20"><circle cx="8.5" cy="8.5" r="5.5"></circle><path d="m13 13 4 4"></path></svg><input id="candidateSearch" type="search" placeholder="搜索地区或运营商"></label>
+              <button class="text-button" id="selectVisible" type="button">仅选可见</button><button class="text-button" id="clearSelection" type="button">清空选择</button>
+            </div>
+            <div class="test-url-row"><label class="field url-field"><span>测速 URL</span><input id="testURL" type="url" placeholder="读取组配置中…"></label><div class="test-actions"><button class="button primary" id="startTest" type="button" disabled>测试选中 <span id="selectedCount">0</span></button><button class="button danger-outline" id="cancelTest" type="button" hidden>取消测试</button></div></div>
+            <div class="progress-wrap" id="testProgress" hidden><div class="progress-label"><span id="progressText">测速中</span><span class="mono" id="progressCount">0 / 0</span></div><progress id="progressBar" max="1" value="0"></progress></div>
+          </div>
+          <div class="panel table-panel">
+            <div class="table-scroll"><table class="data-table speed-table"><thead><tr><th class="select-col"><span class="sr-only">选择</span></th><th>IP 地址</th><th>位置 / 运营商</th><th>首包延迟</th><th>速度</th><th>状态</th><th>操作</th></tr></thead><tbody id="candidateRows"><tr><td colspan="7" class="empty-cell">加载候选地址后开始测速。</td></tr></tbody></table></div>
+          </div>
+          <p class="table-note">速度仅代表该测试资源，按 MiB/s 显示；首包延迟包含连接和响应时间。cn2 和商店需填写真实下载 URL。应用节点后需手动启动服务。</p>
+        </section>
+
+        <section class="page" id="page-logs" aria-labelledby="logsTitle" hidden>
+          <div class="page-heading"><div><h1 id="logsTitle">请求日志</h1><p>查看客户端 DNS、HTTP 和 TLS 请求。此页面每 2 秒更新一次，最多保留 500 条。</p></div><button class="button secondary" id="refreshLogs" type="button">立即刷新</button></div>
+          <div class="panel log-controls"><label class="search-field"><span class="sr-only">筛选请求日志</span><svg aria-hidden="true" viewBox="0 0 20 20"><circle cx="8.5" cy="8.5" r="5.5"></circle><path d="m13 13 4 4"></path></svg><input id="logSearch" type="search" placeholder="筛选客户端、域名或内容"></label><label class="field inline-field kind-filter"><span>类型</span><select id="logKind"><option value="">全部类型</option><option value="dns">DNS</option><option value="http">HTTP</option><option value="tls">TLS</option></select></label><span class="muted" id="logCount">—</span></div>
+          <div class="panel table-panel"><div class="table-scroll"><table class="data-table logs-table"><thead><tr><th>时间</th><th>类型</th><th>客户端</th><th>域名</th><th>详情</th></tr></thead><tbody id="logRows"><tr><td colspan="5" class="empty-cell">正在读取请求日志…</td></tr></tbody></table></div></div>
+        </section>
+
+        <section class="page" id="page-downloads" aria-labelledby="downloadsTitle" hidden>
+          <div class="page-heading">
+            <div><h1 id="downloadsTitle">离线下载</h1><p>让加速服务端在后台下载文件。下载任务保存在服务端，不依赖浏览器保持打开。</p></div>
+            <button class="button secondary" id="refreshDownloads" type="button">刷新任务</button>
+          </div>
+          <div class="notice error" id="downloadsError" role="alert" hidden></div>
+          <div class="notice success" id="downloadsNotice" role="status" hidden></div>
+          <section class="panel storage-panel" aria-labelledby="storageTitle">
+            <div class="panel-heading"><div><h2 id="storageTitle">下载存储空间</h2><p id="storagePath">正在读取下载目录…</p></div><span class="muted" id="storageUpdated"></span></div>
+            <div class="storage-grid">
+              <div class="storage-stat"><span>文件系统总量</span><strong id="storageTotal">—</strong></div>
+              <div class="storage-stat"><span>已用空间</span><strong id="storageUsed">—</strong></div>
+              <div class="storage-stat"><span>文件系统剩余</span><strong id="storageFree">—</strong></div>
+              <div class="storage-stat"><span>可供下载</span><strong id="storageAvailable">—</strong></div>
+              <div class="storage-stat"><span>离线文件占用</span><strong id="storageDownloads">—</strong></div>
+            </div>
+            <p class="storage-note" id="storageNote">可供下载空间会扣除预留空间；默认预留 256 MiB。</p>
+          </section>
+          <form class="panel download-form" id="downloadForm">
+            <div class="panel-heading"><div><h2>创建下载任务</h2><p>粘贴可直接下载文件的 HTTP 或 HTTPS 地址。</p></div></div>
+            <div class="download-form-fields">
+              <label class="field"><span>下载 URL</span><input id="downloadURL" type="url" inputmode="url" placeholder="https://example.com/file.zip" required></label>
+              <label class="field filename-field"><span>文件名（可选）</span><input id="downloadName" type="text" maxlength="180" autocomplete="off" placeholder="留空时使用 URL 中的文件名"></label>
+              <button class="button primary create-download" id="createDownload" type="submit">创建任务</button>
+            </div>
+          </form>
+          <div class="panel table-panel downloads-table-panel">
+            <div class="table-scroll"><table class="data-table downloads-table"><thead><tr><th>文件 / 任务</th><th>状态</th><th>已下载</th><th>文件大小</th><th>当前速度</th><th>错误信息</th><th>操作</th></tr></thead><tbody id="downloadRows"><tr><td colspan="7" class="empty-cell">进入页面后读取离线下载任务。</td></tr></tbody></table></div>
+          </div>
+          <p class="table-note">完成的文件可保存到当前设备。浏览器回退下载限制为 256 MiB；更大的文件请直接从 NAS 下载目录读取，或使用 CLI 输出位置。</p>
+        </section>
+
+        <section class="page" id="page-help" aria-labelledby="helpTitle" hidden>
+          <div class="page-heading"><div><h1 id="helpTitle">使用帮助</h1><p>将服务部署在局域网主机上，为 Xbox、Windows Xbox App 或 Microsoft Store 下载客户端提供网络优选。</p></div></div>
+          <div class="help-layout">
+            <article class="panel help-panel"><div class="help-symbol">01</div><h2>设置下载客户端</h2><p>在 Xbox 或 Windows 设备的网络设置中，将 DNS 服务器改为本页显示的<strong>局域网 IP</strong>。客户端和加速服务端需要连接同一局域网。</p><div class="help-callout"><span>服务端局域网 IP</span><strong class="metric-mono" id="helpAddress">—</strong></div></article>
+            <article class="panel help-panel"><div class="help-symbol">02</div><h2>检查端口占用</h2><p>确保 NAS 或主机上的下列端口可供此服务使用。TLS 监听可按需关闭。</p><ul class="port-list"><li><span>DNS</span><code>53 UDP + TCP</code></li><li><span>HTTP</span><code>80 TCP</code></li><li><span>TLS</span><code>443 TCP</code></li></ul></article>
+            <article class="panel help-panel wide-help"><div class="help-symbol">03</div><h2>了解工作方式</h2><p>停止服务后，请在下载客户端的网络设置中手动将 DNS 恢复为自动获取。本工具不会修改宿主机的 DNS 配置。HTTPS 请求保留原始域名和证书，本服务不解密 HTTPS，也不是覆盖所有流量的全流量反向代理。</p></article>
+          </div>
+        </section>
+      </main>
+      <footer class="app-footer"><span>Xbox Download Proxy</span><span>局域网管理</span></footer>
+    </div>
+  </div>
+</body>
+</html>

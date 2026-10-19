@@ -1,0 +1,8 @@
+.git
+.gitignore
+.dockerignore
+.DS_Store
+data
+dist
+xdp
+coverage.out

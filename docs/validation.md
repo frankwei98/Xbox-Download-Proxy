@@ -1,0 +1,36 @@
+# MVP 验证记录
+
+日期：2026-10-18。验证环境：macOS arm64、Go 1.26.1。
+
+## 已通过
+
+- `go test -race ./...`：DNS UDP/TCP 本地映射与转发、空 AAAA 答复、HTTP 重定向及签名查询参数保留、未知域名拒绝、启动失败回滚、TLS ClientHello 解析和加密通道、候选源缓存/导入、测速请求 Host/Range/吞吐单位/取消、配置持久化及管理接口生命周期。
+- TLS 通道测试实际建立 TLS 会话，核对原站证书未被替换，HTTP 下载内容和 SNI 保持不变。测试使用本地 fixture，不连接真实游戏 CDN。
+- `go vet ./...`。
+- `node --check internal/app/web/app.js`。
+- 使用已有 Playwright / headless Chromium 对本地高端口实例执行浏览器交互：错误及正确 token 登录、配置读取与保存、候选导入、恶意 HTML 按文本显示、手动应用 IP、商店缺少测试 URL 提示、服务启停、运行中配置更新拒绝、HTTP 跳转日志及分类过滤、桌面和 390px 窄屏布局。未发现页面 JavaScript 异常。浏览器 fixture 中的候选 IP 仅用于界面测试，不作为有效游戏 CDN 推荐。
+- CLI 实际读取本地测试实例的状态及日志。
+- `make build dist`：本机 `xdp`，以及 Linux amd64/arm64、macOS amd64/arm64 四个可执行文件。Linux 产物为静态链接 ELF，macOS 产物为对应架构 Mach-O。交叉编译不等于已在每个平台运行。
+- `docker compose config --quiet`。
+
+## 离线下载扩展验证
+
+同日新增并通过：
+
+- 完整 `go test -race ./...`，包括后台两任务并发与排队、暂停/取消、带 ETag 的 Range/If-Range 续传、重启保留进度、源站忽略 Range 时从头下载、下载内容逐字节比较。
+- 已知大小的空间预检与未知大小在接收途中触发空间预算暂停；使用注入的容量 fixture 测试边界，另用本机 statfs 核对真实空间统计。未填满真实磁盘。
+- 下载库独占文件锁、异常退出后任务恢复、非法文件名和非公网目标拒绝、非法 Content-Range 与私网重定向拒绝。
+- 管理 API 的文件鉴权、HTTP Range 取回、已完成任务删除；CLI 流式保存及拒绝覆盖已有文件。
+- 在真实本机服务上运行 CLI 的列表/空间、创建、暂停、继续、取消、删除及流式取回命令；取回文件 SHA-256 与 fixture 一致。任务失败路径使用无监听的本机上游 DNS，不访问公网。
+- 使用 Python Playwright 与已有 headless Chromium 检查真实磁盘空间显示、进度、文件名按文本显示、任务创建/失败/取消/删除、刷新后的持久状态、认证文件取回并核对 SHA-256，以及桌面/390px 布局，无页面 JavaScript 异常。浏览器测试的完成/部分文件为预置 fixture；实际网络下载及续传由 Go 本机 HTTP fixture 覆盖，没有连接真实游戏下载 CDN。
+- 更新后的 Linux/macOS amd64/arm64 可执行文件交叉构建、`go vet`、JavaScript 语法检查和 Compose 配置检查。
+
+执行网络测试时需要测试进程能够绑定本机临时端口；受限执行环境最初禁止 socket bind，放开本地测试进程后测试通过。开发环境 Go 缓存使用 `/tmp/xdp-go-cache`，未改动宿主网络配置。
+
+## 尚未验证
+
+- 当前环境 Docker daemon 未运行，因此没有完成镜像构建、容器启动或 NAS 安装验证。
+- 未进行 Xbox 主机、Windows Xbox App 或 Microsoft Store 的实际下载、断点续传及优选收益测试；由用户按 [手工验收清单](manual-test.md) 自行验证。
+- 候选 IP 列表和默认测速资源的大陆网络可达性及每个实际游戏的 CDN 缓存命中，不属于本地 fixture 测试可证明的事实。
+
+cn2/store 不依赖作者商店 API 获取测试资源，首次测速需要用户提供真实可下载 URL。Microsoft Store 域名的 DNS 指定 IP 功能不依赖该 URL。
