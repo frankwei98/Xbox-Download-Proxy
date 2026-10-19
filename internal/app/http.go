@@ -168,7 +168,7 @@ func (a *App) Handler() http.Handler {
 	sub, _ := fs.Sub(assets, "web")
 	files := http.FileServer(http.FS(sub))
 	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" && r.URL.Path != "/app.js" && r.URL.Path != "/style.css" {
+		if r.URL.Path != "/" && r.URL.Path != "/app.js" && r.URL.Path != "/node-selection.mjs" && r.URL.Path != "/style.css" {
 			http.NotFound(w, r)
 			return
 		}

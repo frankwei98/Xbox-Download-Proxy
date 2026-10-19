@@ -3,7 +3,8 @@ FROM golang:1.26-alpine AS builder
 WORKDIR /src
 COPY go.mod ./
 RUN go mod download
-COPY . .
+COPY cmd ./cmd
+COPY internal ./internal
 RUN CGO_ENABLED=0 go build -trimpath -o /out/xdp ./cmd/xdp
 
 FROM alpine:3.23

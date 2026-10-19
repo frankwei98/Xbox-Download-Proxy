@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"xboxdownloadproxy/internal/config"
 )
@@ -32,6 +33,9 @@ func TestManagementLifecycle(t *testing.T) {
 	}
 	a := New(dir, "test-token", c)
 	defer a.Close()
+	if a.Status().Running || a.Config().AutoStart {
+		t.Fatal("fresh installation must leave download services stopped")
+	}
 	h := a.Handler()
 	call := func(method, path string, body any, auth, origin string) *httptest.ResponseRecorder {
 		var b bytes.Buffer
@@ -68,6 +72,9 @@ func TestManagementLifecycle(t *testing.T) {
 	}
 	if w := call("GET", "/", nil, "", ""); w.Code != 200 || !bytes.Contains(w.Body.Bytes(), []byte("Xbox")) {
 		t.Fatal("embedded UI unavailable")
+	}
+	if w := call("GET", "/node-selection.mjs", nil, "", ""); w.Code != 200 || !bytes.Contains(w.Body.Bytes(), []byte("export function matchesCandidate")) || !strings.Contains(w.Header().Get("Content-Type"), "javascript") {
+		t.Fatalf("node selection module unavailable: %d %s", w.Code, w.Header().Get("Content-Type"))
 	}
 	if w := call("POST", "/api/tests", map[string]any{"group": "store", "ips": []string{"1.1.1.1"}}, "Bearer test-token", ""); w.Code != 400 {
 		t.Fatal("missing Store test URL not reported")

@@ -96,6 +96,21 @@ main { grid-column: 2; grid-row: 1; width: 100%; max-width: 1440px; margin: 0 au
 .notice { margin: 0 0 15px; padding: 10px 13px; border: 1px solid; border-radius: 4px; font-size: 13px; }
 .notice.error { color: #8d231d; background: var(--red-soft); border-color: #f0c3be; }
 .notice.success { color: #21622b; background: var(--green-soft); border-color: #bbdfbd; }
+.service-banner { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-bottom: 22px; padding: 17px 19px; border: 1px solid var(--line-strong); border-left-width: 5px; border-radius: var(--radius); background: var(--surface); }
+.service-banner strong { display: block; color: var(--ink-strong); font-size: 17px; text-wrap: balance; }
+.service-banner p { margin: 5px 0 0; max-width: 880px; font-size: 13px; text-wrap: pretty; }
+.service-banner.is-stopped { border-color: #dbc48b; background: var(--amber-soft); color: #775715; }
+.service-banner.is-stopped strong { color: #775715; }
+.service-banner.is-running { border-color: #bbdfbd; background: var(--green-soft); color: var(--green-dark); }
+.service-banner.is-unknown { border-color: var(--line-strong); color: var(--muted); }
+.service-banner .button { flex-shrink: 0; }
+.service-state.is-stopped { color: var(--amber); font-weight: 650; }
+.is-stopped .state-dot { background: var(--amber); }
+.region-controls { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; align-items: end; gap: 12px; margin-top: 18px; }
+.region-hint { margin: 10px 0 0; color: var(--muted); font-size: 12px; }
+.recommendation { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px; margin-top: 14px; border: 1px solid #bbdfbd; border-radius: 4px; background: var(--green-soft); color: var(--green-dark); font-variant-numeric: tabular-nums; }
+.recommendation .button { flex-shrink: 0; }
+.token-help code { overflow-wrap: anywhere; }
 .speed-controls { padding: 17px 19px 16px; margin-bottom: 13px; }
 .control-row { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 9px; }
 .inline-field { min-width: 175px; }
@@ -209,6 +224,10 @@ progress::-webkit-progress-value { background: var(--green); border-radius: 5px;
   .logs-table { min-width: 800px; }
 }
 @media (max-width: 700px) {
+  .service-banner { align-items: stretch; flex-direction: column; gap: 12px; padding: 14px; }
+  .service-banner strong { font-size: 16px; }
+  .region-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .recommendation { align-items: stretch; flex-direction: column; }
   .topbar { height: 58px; padding: 0 15px; }
   .brand { gap: 8px; }
   .brand-mark { width: 29px; height: 29px; font-size: 15px; }
@@ -263,7 +282,7 @@ progress::-webkit-progress-value { background: var(--green); border-radius: 5px;
   .app-footer { padding: 10px 14px 13px; }
 }
 @media (max-width: 390px) {
-  .service-state { font-size: 0; }
+  .service-state { font-size: 10px; }
   .state-dot { width: 9px; height: 9px; }
   .topbar-right { gap: 8px; }
   .brand-name { max-width: 152px; font-size: 13px; }

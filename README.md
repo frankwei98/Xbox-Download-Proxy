@@ -37,7 +37,37 @@ NAS 上已有 DNS、Web 或其他服务占用端口时，需要自行腾出标�
 
 IPv6 对受控域名可能返回空 AAAA 答案，以避免绕过 IPv4 节点选择。客户端已有的 IPv6 DNS 缓存或加密 DNS 仍可能绕过服务，请按你的网络环境验证。主机休眠会让服务暂时不可用；macOS 可在服务运行期间用 `caffeinate` 防止睡眠。
 
-## 原生安装
+## 引导安装（推荐）
+
+在项目根目录运行：
+
+```sh
+./setup.sh
+```
+
+脚本引导选择本机安装或 Docker Compose、安装目录、服务端 LAN IPv4 和管理端口。默认安装到 `~/.local/share/xdp`，完成后直接显示 **WebUI 地址、管理 token 和启动命令**。已有配置与 token 会保留；更新生成的二进制、启动脚本或 Compose 文件时会先确认。脚本不会修改系统 DNS 或自动提权。
+
+本机模式有 Go 时优先从当前源码编译，避免误用旧的本地构建产物；需要 Go 1.24 或更新版本。没有 Go 时使用项目根目录已有的 `xdp`。生成的 `start.sh` 用于前台运行 Web/API；如启用 53/80/443 时提示权限不足，先用 Ctrl+C 停止前台进程，再按脚本给出的 `sudo` 命令重启，之后在 WebUI 启用加速服务。Compose 模式需要 Docker 与 `docker compose`，使用本地 Dockerfile 构建，主要面向 Linux NAS；生成文件引用当前仓库的绝对路径，后续重建镜像需要保留仓库。
+
+也可直接传入参数：
+
+```sh
+./setup.sh --mode native --lan-ip 192.168.1.10
+./setup.sh --mode compose --lan-ip 192.168.1.10 --install-dir ./deployment
+# Compose 初始化后立即启动 Web/API（新安装的加速服务仍保持关闭）
+./setup.sh --mode compose --lan-ip 192.168.1.10 --install-dir ./deployment --yes --start
+./setup.sh --help
+```
+
+新安装默认只运行管理界面；已有安装沿用 `autoStart` 设置。登录后建议按以下顺序完成配置：
+
+1. 在“测速”选择下载域名组、所在省份和运营商，点击“按地区自动测速”。默认从匹配项中抽样最多 16 个节点，可调整至 8–128 个；搜索框也会参与筛选。没有地区匹配时会提示调整条件，未标注地区的节点可手选。
+2. 比较结果，点击“应用最快节点”或手动应用其他节点。只推荐成功且有有效吞吐的结果；应用节点会停止加速服务。
+3. 检查网络设置，点击醒目状态提示中的“启动加速服务”。确认显示“加速服务已开启”后，再将 Xbox / Windows 的 DNS 设置为服务端 LAN IP。
+
+搜索支持空格分隔的多个关键词，例如 `广东 联通` 可以匹配 `广东深圳 联通`，关键词顺序不限。省份和运营商信息来自候选源标注，不使用定位权限，也不保证同省节点一定最快。自动测速会显示流量预算，不会自动应用节点或启用 DNS/HTTP(S)。`cn2` 和 Microsoft Store 需先填写真实下载 URL。
+
+## 手动原生安装
 
 要求 Go 1.24 或更新版本（开发验证使用 Go 1.26.1）。本项目使用 Go 标准库构建，静态 Web 文件嵌入可执行文件；支持 Linux/macOS 的 amd64 与 arm64。
 
@@ -47,7 +77,7 @@ go build -o xdp ./cmd/xdp
 ./xdp init --data-dir ./data
 ```
 
-初始化会生成 `data/config.json` 和随机管理令牌 `data/token`（权限为仅当前用户可读写）。请妥善保管该令牌。启动 Web UI/API：
+初始化会生成 `data/config.json` 和随机管理令牌 `data/token`（权限为仅当前用户可读写），并直接在终端显示令牌。请妥善保管该令牌。启动 Web UI/API：
 
 ```sh
 ./xdp serve --data-dir ./data --lan-ip 192.168.1.10
@@ -138,6 +168,8 @@ curl -H "Authorization: Bearer $XDP_TOKEN" \
 ```sh
 make build  # 本机可执行文件 ./xdp
 make test   # Go 测试
+make test-ui # 节点筛选 / 推荐逻辑测试（需要 Node.js 18+）
+make test-setup # 安装脚本 mock 测试（无需真实安装或 Docker）
 make vet    # go vet
 make dist   # Linux/macOS amd64/arm64 交叉构建到 dist/
 ```
