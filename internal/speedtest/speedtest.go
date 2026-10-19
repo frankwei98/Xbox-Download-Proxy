@@ -179,6 +179,9 @@ func Measure(parent context.Context, ip, target string, limits config.Test) Resu
 	result.LatencyMS = float64(time.Since(start).Microseconds()) / 1000
 	if e != nil {
 		result.Error = e.Error()
+		if parent.Err() != nil {
+			result.Error = "cancelled"
+		}
 		return result
 	}
 	defer res.Body.Close()

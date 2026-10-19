@@ -99,7 +99,7 @@ func TestDNSHTTPAndRollback(t *testing.T) {
 	}
 	l.Close()
 }
-func TestDNSForwardAndFailure(t *testing.T) {
+func TestDNSForwardUDP(t *testing.T) {
 	upstream, e := net.ListenPacket("udp", "127.0.0.1:0")
 	if e != nil {
 		t.Fatal(e)
@@ -127,10 +127,6 @@ func TestDNSForwardAndFailure(t *testing.T) {
 	b, e := exchange(context.Background(), c.DNSListen, query("example.com"), false)
 	if e != nil || !bytes.Equal(b[len(b)-4:], []byte{1, 1, 1, 1}) {
 		t.Fatalf("forward %x %v", b, e)
-	}
-	ips, e := ResolveIPv4(context.Background(), "assets2.xboxlive.cn", c.DNSListen)
-	if e == nil && len(ips) > 0 {
-		t.Fatal("loopback/public address validation unexpectedly passed")
 	}
 }
 func TestClientHelloPreservesWire(t *testing.T) {

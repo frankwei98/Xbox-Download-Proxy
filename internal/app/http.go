@@ -157,7 +157,11 @@ func (a *App) Handler() http.Handler {
 		}
 		if origin := r.Header.Get("Origin"); origin != "" {
 			u, e := url.Parse(origin)
-			if e != nil || u.Host != r.Host || (u.Scheme != "http" && u.Scheme != "https") {
+			scheme := "http"
+			if r.TLS != nil {
+				scheme = "https"
+			}
+			if e != nil || u.Host != r.Host || u.Scheme != scheme {
 				problem(w, 403, errors.New("cross-origin management request rejected"))
 				return
 			}
