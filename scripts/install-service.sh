@@ -29,7 +29,9 @@ case "$manager" in auto|systemd|openrc) ;; *) fail "manager must be auto, system
 [ "$(uname -s)" = Linux ] || fail "system services are supported on Linux only"
 [ "$(id -u)" -eq 0 ] || fail "run explicitly as root using su, sudo or doas"
 dir=$(CDPATH='' cd -- "$(dirname "$0")" && pwd -P)
-[ -x "$dir/xdp" ] && [ -x "$dir/start.sh" ] || fail "run setup.sh first; keep this helper beside xdp and start.sh"
+if [ ! -x "$dir/xdp" ] || [ ! -x "$dir/start.sh" ]; then
+  fail "run setup.sh first; keep this helper beside xdp and start.sh"
+fi
 
 # A minimal Docker container may have service tools without a running init.
 if [ "$manager" = auto ]; then
