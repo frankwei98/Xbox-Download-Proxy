@@ -33,6 +33,7 @@ var (
 type Task struct {
 	ID           string    `json:"id"`
 	URL          string    `json:"url"`
+	OriginalURL  string    `json:"originalURL,omitempty"`
 	Name         string    `json:"name"`
 	State        string    `json:"state"`
 	Bytes        int64     `json:"bytes"`
@@ -105,7 +106,7 @@ func New(dir string, resolve Resolve) (*Manager, error) {
 			return nil, fmt.Errorf("read download tasks: %w", err)
 		}
 		for _, task := range tasks {
-			if !validID(task.ID) || !validName(task.Name) || validateURL(task.URL) != nil || m.tasks[task.ID] != nil || task.Bytes < 0 || task.TotalBytes < -1 || !validState(task.State) {
+			if !validID(task.ID) || !validName(task.Name) || validateURL(task.URL) != nil || (task.OriginalURL != "" && validateURL(task.OriginalURL) != nil) || m.tasks[task.ID] != nil || task.Bytes < 0 || task.TotalBytes < -1 || !validState(task.State) {
 				r.Close()
 				return nil, errors.New("invalid persisted download task")
 			}
@@ -190,6 +191,15 @@ func (m *Manager) saveLocked() error {
 }
 
 func (m *Manager) Add(raw, name string) (Task, error) {
+	return m.AddFrom(raw, raw, name)
+}
+
+// AddFrom keeps the captured resource URL even when the downloader uses a CDN
+// alias. Existing callers can keep using Add when no rewrite is necessary.
+func (m *Manager) AddFrom(original, raw, name string) (Task, error) {
+	if err := validateURL(original); err != nil {
+		return Task{}, err
+	}
 	if err := validateURL(raw); err != nil {
 		return Task{}, err
 	}
@@ -211,7 +221,7 @@ func (m *Manager) Add(raw, name string) (Task, error) {
 		return Task{}, err
 	}
 	now := time.Now().UTC()
-	task := Task{ID: hex.EncodeToString(b), URL: raw, Name: name, State: "queued", TotalBytes: -1, CreatedAt: now, UpdatedAt: now}
+	task := Task{ID: hex.EncodeToString(b), URL: raw, OriginalURL: original, Name: name, State: "queued", TotalBytes: -1, CreatedAt: now, UpdatedAt: now}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed {
@@ -348,6 +358,10 @@ func (m *Manager) Delete(id string) error {
 func (m *Manager) OpenCompleted(id string) (*os.File, Task, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.openCompletedLocked(id)
+}
+
+func (m *Manager) openCompletedLocked(id string) (*os.File, Task, error) {
 	task, ok := m.tasks[id]
 	if !ok {
 		return nil, Task{}, ErrNotFound

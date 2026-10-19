@@ -188,6 +188,13 @@ progress::-webkit-progress-value { background: var(--green); border-radius: 5px;
 .storage-stat span { color: var(--muted); font-size: 11px; }
 .storage-stat strong { color: var(--ink-strong); font: 600 15px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .storage-note { margin: 10px 0 0; color: var(--muted); font-size: 11px; }
+.delivery-panel { margin-bottom: 14px; padding: 18px 20px; border-left: 4px solid #c9a24b; }
+.delivery-panel.is-active { border-left-color: #3f9861; }
+.delivery-panel .panel-heading { align-items: center; margin-bottom: 10px; }
+.delivery-counts { display: flex; flex-wrap: wrap; gap: 15px; color: var(--muted); font-size: 12px; }
+.delivery-counts b { color: var(--ink-strong); font: 600 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.delivery-guide { margin: 0; color: #425766; font-size: 12px; line-height: 1.6; }
+.delivery-task-state { display: block; margin-top: 5px; color: var(--muted); font-size: 10px; white-space: nowrap; }
 .download-form-fields { display: grid; grid-template-columns: minmax(220px, 2fr) minmax(170px, 1fr) auto; align-items: end; gap: 12px; }
 .create-download { min-width: 112px; }
 .downloads-table { min-width: 1040px; }

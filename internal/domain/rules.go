@@ -34,6 +34,13 @@ func GroupFor(host string) string {
 }
 func first(host string) bool { return !strings.Contains(strings.Split(host, ".")[0], "2") }
 
+// LocalDeliveryHost covers Xbox game CDN aliases. Store URLs and HTTPS file
+// delivery are deliberately outside this HTTP-only feature.
+func LocalDeliveryHost(host string) bool {
+	key := GroupFor(host)
+	return key == "global" || key == "cn1" || key == "cn2"
+}
+
 // Address chooses the CDN IP, or the local HTTP redirect listener, for an A query.
 // An empty address means preserve the upstream DNS answer.
 func Address(c config.Config, host string) string {
@@ -41,6 +48,9 @@ func Address(c config.Config, host string) string {
 	key := GroupFor(host)
 	if key == "" {
 		return ""
+	}
+	if c.OfflineEnabled && LocalDeliveryHost(host) {
+		return c.LANIP
 	}
 	g := c.Groups[key]
 	if key == "store" {

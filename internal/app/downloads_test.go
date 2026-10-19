@@ -30,7 +30,9 @@ func TestOfflineManagementAndAuthenticatedFileRanges(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "tasks.json"), b, 0600); err != nil {
 		t.Fatal(err)
 	}
-	a := New(dir, "secret", config.Default())
+	cfg := config.Default()
+	cfg.OfflineEnabled = true
+	a := New(dir, "secret", cfg)
 	defer a.Close()
 	if a.DownloadError() != nil {
 		t.Fatal(a.DownloadError())
@@ -77,5 +79,72 @@ func TestOfflineManagementAndAuthenticatedFileRanges(t *testing.T) {
 	}
 	if w := call("GET", "/api/downloads/"+id+"/file", "", "secret", ""); w.Code != 404 {
 		t.Fatal("deleted file still served")
+	}
+}
+
+func TestOfflineOptInDoesNotTouchLibraryAndTogglePreservesFiles(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.Default()
+	a := New(dir, "secret", cfg)
+	defer a.Close()
+	if a.downloads != nil || a.DownloadError() != nil {
+		t.Fatal("disabled feature opened a library")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "downloads")); !os.IsNotExist(err) {
+		t.Fatal("disabled feature created its library", err)
+	}
+	call := func(method, path, body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, "http://localhost"+path, strings.NewReader(body))
+		r.Header.Set("Authorization", "Bearer secret")
+		w := httptest.NewRecorder()
+		a.Handler().ServeHTTP(w, r)
+		return w
+	}
+	w := call("GET", "/api/downloads", "")
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"enabled":false`) {
+		t.Fatal("no disabled status", w.Code, w.Body.String())
+	}
+	if w := call("POST", "/api/downloads", `{"url":"http://assets1.xboxlive.com/file"}`); w.Code != 409 {
+		t.Fatal("disabled queue accepted task")
+	}
+	cfg.OfflineEnabled = true
+	if err := a.Update(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if a.downloads == nil {
+		t.Fatal("toggle did not open library")
+	}
+	// A file left by a paused task must survive disabling and re-enabling.
+	id := strings.Repeat("c", 32)
+	root := filepath.Join(dir, "downloads")
+	if err := os.MkdirAll(filepath.Join(root, id), 0700); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(root, id, "game.bin")
+	if err := os.WriteFile(file, []byte("partial"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	a.downloads.Close()
+	task := offline.Task{ID: id, Name: "game.bin", URL: "http://assets1.xboxlive.com/file", State: "paused", Bytes: 7, TotalBytes: 100}
+	b, _ := json.Marshal([]offline.Task{task})
+	if err := os.WriteFile(filepath.Join(root, "tasks.json"), b, 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg.OfflineEnabled = false
+	if err := a.Update(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if a.downloads != nil {
+		t.Fatal("disabled manager retained")
+	}
+	cfg.OfflineEnabled = true
+	if err := a.Update(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if got := a.downloads.List(); len(got) != 1 || got[0].State != "paused" || got[0].Bytes != 7 {
+		t.Fatalf("task lost on toggle: %+v", got)
+	}
+	if got, err := os.ReadFile(file); err != nil || string(got) != "partial" {
+		t.Fatal("disabled feature removed file", err)
 	}
 }

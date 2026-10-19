@@ -28,6 +28,7 @@ type Event struct {
 }
 type App struct {
 	mu          sync.Mutex
+	downloadMu  sync.RWMutex
 	dir         string
 	cfg         config.Config
 	webListen   string
@@ -40,6 +41,7 @@ type App struct {
 	tests       *speedtest.Manager
 	downloads   *offline.Manager
 	downloadErr error
+	downloadDir string
 	eventMu     sync.Mutex
 	events      []Event
 	nextEvent   uint64
@@ -67,16 +69,26 @@ func NewWithDownloads(dir, token string, c config.Config, downloadDir string) *A
 	if downloadDir == "" {
 		downloadDir = filepath.Join(dir, "downloads")
 	}
-	a.downloads, a.downloadErr = offline.New(downloadDir, func(ctx context.Context, host string) ([]string, error) {
+	a.downloadDir = downloadDir
+	if c.OfflineEnabled {
+		a.downloads, a.downloadErr = a.newDownloads()
+	}
+	return a
+}
+func (a *App) newDownloads() (*offline.Manager, error) {
+	return offline.New(a.downloadDir, func(ctx context.Context, host string) ([]string, error) {
 		cfg := a.Config()
 		if group := domain.GroupFor(host); group != "" && cfg.Groups[group].IP != "" {
 			return []string{cfg.Groups[group].IP}, nil
 		}
 		return engine.ResolveIPv4(ctx, host, cfg.UpstreamDNS)
 	})
-	return a
 }
-func (a *App) DownloadError() error  { return a.downloadErr }
+func (a *App) DownloadError() error {
+	a.downloadMu.RLock()
+	defer a.downloadMu.RUnlock()
+	return a.downloadErr
+}
 func (a *App) Config() config.Config { a.mu.Lock(); defer a.mu.Unlock(); return config.Clone(a.cfg) }
 func (a *App) Status() Status {
 	a.mu.Lock()
@@ -90,6 +102,8 @@ func (a *App) Status() Status {
 	return s
 }
 func (a *App) Start() error {
+	a.downloadMu.RLock()
+	defer a.downloadMu.RUnlock()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.runtime != nil {
@@ -98,7 +112,10 @@ func (a *App) Start() error {
 	if err := config.Validate(a.cfg); err != nil {
 		return err
 	}
-	r, e := engine.Start(a.cfg, a.log)
+	if a.cfg.OfflineEnabled && a.downloadErr != nil {
+		return fmt.Errorf("local delivery requires the download library: %w", a.downloadErr)
+	}
+	r, e := engine.Start(a.cfg, a.log, a.downloads)
 	if e != nil {
 		a.lastError = e.Error()
 		a.log("ERROR", "", "", e.Error(), "")
@@ -121,24 +138,53 @@ func (a *App) stopLocked() {
 func (a *App) Stop() { a.mu.Lock(); defer a.mu.Unlock(); a.stopLocked() }
 func (a *App) Close() {
 	a.tests.Close()
+	a.Stop()
+	a.downloadMu.Lock()
+	defer a.downloadMu.Unlock()
 	if a.downloads != nil {
 		a.downloads.Close()
 	}
-	a.Stop()
 }
 func (a *App) Update(c config.Config) error {
 	if e := config.Validate(c); e != nil {
 		return e
 	}
+	// Lock the library before config: download workers may read Config while
+	// a management request waits for a task to pause. Close it after releasing
+	// mu so shutdown can never block those workers on the config lock.
+	a.downloadMu.Lock()
+	defer a.downloadMu.Unlock()
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	if a.runtime != nil {
+		a.mu.Unlock()
 		return ErrRunning
 	}
+	previous := a.downloads
+	next := previous
+	if c.OfflineEnabled && next == nil {
+		var err error
+		next, err = a.newDownloads()
+		if err != nil {
+			a.mu.Unlock()
+			return fmt.Errorf("download library: %w", err)
+		}
+	}
+	if !c.OfflineEnabled {
+		next = nil
+	}
 	if e := config.Save(a.dir, c); e != nil {
+		a.mu.Unlock()
+		if next != nil && next != previous {
+			next.Close()
+		}
 		return e
 	}
 	a.cfg = config.Clone(c)
+	a.downloads, a.downloadErr = next, nil
+	a.mu.Unlock()
+	if previous != nil && previous != next {
+		previous.Close()
+	}
 	a.log("CONFIG", "", "", "配置已保存", "")
 	return nil
 }

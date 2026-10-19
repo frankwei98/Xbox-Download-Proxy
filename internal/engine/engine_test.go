@@ -36,7 +36,7 @@ func testConfig(t *testing.T) config.Config {
 }
 func TestDNSHTTPAndRollback(t *testing.T) {
 	c := testConfig(t)
-	r, e := Start(c, nil)
+	r, e := Start(c, nil, nil)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -84,7 +84,7 @@ func TestDNSHTTPAndRollback(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer tcp.Close()
-	if failed, e := Start(c, nil); e == nil {
+	if failed, e := Start(c, nil, nil); e == nil {
 		failed.Close()
 		t.Fatal("expected occupied HTTP failure")
 	}
@@ -119,7 +119,7 @@ func TestDNSForwardAndFailure(t *testing.T) {
 	}()
 	c := testConfig(t)
 	c.UpstreamDNS = upstream.LocalAddr().String()
-	r, e := Start(c, nil)
+	r, e := Start(c, nil, nil)
 	if e != nil {
 		t.Fatal(e)
 	}

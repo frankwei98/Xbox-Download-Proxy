@@ -12,6 +12,7 @@ import (
 	"time"
 	"xboxdownloadproxy/internal/config"
 	"xboxdownloadproxy/internal/domain"
+	"xboxdownloadproxy/internal/offline"
 )
 
 type Logger func(kind, client, host, message, url string)
@@ -32,21 +33,31 @@ type Runtime struct {
 	dnsQueries     atomic.Uint64
 	httpRedirects  atomic.Uint64
 	tlsConnections atomic.Uint64
+	localHits      atomic.Uint64
+	localBytes     atomic.Uint64
+	files          *offline.Manager
+	httpTransport  *http.Transport
+	httpSlots      chan struct{}
+	dialHTTP       func(context.Context, string, string) (net.Conn, error)
 	dialTLS        func(context.Context, string, string) (net.Conn, error)
 }
 type Metrics struct {
 	DNSQueries     uint64 `json:"dnsQueries"`
 	HTTPRedirects  uint64 `json:"httpRedirects"`
 	TLSConnections uint64 `json:"tlsConnections"`
+	LocalHits      uint64 `json:"localHits"`
+	LocalBytes     uint64 `json:"localBytes"`
 }
 
 func (r *Runtime) Metrics() Metrics {
-	return Metrics{r.dnsQueries.Load(), r.httpRedirects.Load(), r.tlsConnections.Load()}
+	return Metrics{DNSQueries: r.dnsQueries.Load(), HTTPRedirects: r.httpRedirects.Load(), TLSConnections: r.tlsConnections.Load(), LocalHits: r.localHits.Load(), LocalBytes: r.localBytes.Load()}
 }
-func Start(c config.Config, log Logger) (*Runtime, error) {
+func Start(c config.Config, log Logger, files *offline.Manager) (*Runtime, error) {
 	ctx, cancel := context.WithCancel(context.Background())
-	r := &Runtime{cfg: config.Clone(c), ctx: ctx, cancel: cancel, log: log, slots: make(chan struct{}, 128), connections: map[net.Conn]bool{}}
+	r := &Runtime{cfg: config.Clone(c), ctx: ctx, cancel: cancel, log: log, slots: make(chan struct{}, 128), connections: map[net.Conn]bool{}, files: files, httpSlots: make(chan struct{}, 32)}
 	r.dialTLS = (&net.Dialer{Timeout: 5 * time.Second}).DialContext
+	r.dialHTTP = (&net.Dialer{Timeout: 5 * time.Second}).DialContext
+	r.httpTransport = r.newHTTPTransport()
 	if log == nil {
 		r.log = func(string, string, string, string, string) {}
 	}
@@ -69,7 +80,7 @@ func Start(c config.Config, log Logger) (*Runtime, error) {
 			return nil, fmt.Errorf("TLS %s: %w", c.TLSListen, e)
 		}
 	}
-	r.server = &http.Server{Handler: http.HandlerFunc(r.redirect), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 15 * time.Second, MaxHeaderBytes: 16 * 1024}
+	r.server = &http.Server{Handler: http.HandlerFunc(r.redirect), BaseContext: func(net.Listener) context.Context { return ctx }, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 15 * time.Second, MaxHeaderBytes: 16 * 1024}
 	go r.serveUDP()
 	go r.serveDNSTCP()
 	go func() {
@@ -131,6 +142,9 @@ func (r *Runtime) Close() {
 		c.Close()
 	}
 	r.mu.Unlock()
+	if r.httpTransport != nil {
+		r.httpTransport.CloseIdleConnections()
+	}
 	if r.server != nil {
 		_ = r.server.Close()
 	}
@@ -162,6 +176,29 @@ func (r *Runtime) redirect(w http.ResponseWriter, req *http.Request) {
 		host = h
 	}
 	host = domain.Normalize(host)
+	if domain.GroupFor(host) == "" {
+		http.NotFound(w, req)
+		return
+	}
+	if r.cfg.OfflineEnabled && domain.LocalDeliveryHost(host) {
+		select {
+		case r.httpSlots <- struct{}{}:
+			defer func() { <-r.httpSlots }()
+		default:
+			http.Error(w, "too many file transfers", http.StatusServiceUnavailable)
+			return
+		}
+		if r.serveLocal(w, req, host) {
+			return
+		}
+		// All Xbox aliases now resolve to this listener. Relay a terminal miss
+		// using upstream DNS or the chosen CDN IP, rather than redirecting back
+		// to ourselves. Alias redirects below remain ordinary HTTP 302s.
+		if domain.Redirect(r.cfg, host) == "" {
+			r.relayHTTP(w, req, host)
+			return
+		}
+	}
 	dest := domain.Redirect(r.cfg, host)
 	if dest == "" {
 		http.NotFound(w, req)
@@ -184,6 +221,9 @@ func (r *Runtime) TLSUpstream(ctx context.Context, host string) (string, error) 
 		return "", errors.New("SNI is not an allowed download domain")
 	}
 	if ip := r.cfg.Groups[key].IP; ip != "" {
+		if ip == r.cfg.LANIP {
+			return "", errors.New("selected CDN IP points back to the service")
+		}
 		return ip, nil
 	}
 	ips, e := ResolveIPv4(ctx, host, r.cfg.UpstreamDNS)
