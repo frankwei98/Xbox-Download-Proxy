@@ -1,3 +1,5 @@
+import { provinces, matchesCandidate, selectForTest, bestResult } from './node-selection.mjs';
+
 (() => {
   'use strict';
 
@@ -7,8 +9,8 @@
   const state = {
     token: sessionStorage.getItem(tokenKey) || '', config: null, status: null,
     page: 'service', group: 'global', groups: [], candidates: [], selected: new Set(),
-    results: new Map(), job: null, testStarting: false, candidateRequest: 0,
-    candidateController: null, candidateRequestMode: '', candidateLoading: false,
+    results: new Map(), job: null, testStarting: false, autoPreparing: false, importing: false, serviceBusy: false, candidateRequest: 0,
+    candidateController: null, candidateRequestMode: '', candidateLoading: false, candidateSourceWarning: '',
     logs: [], lastLogID: 0, logsStarted: false, configLoaded: false, statusTimer: null,
     downloads: [], storage: null, downloadsTimer: null, downloadsLoading: false,
     downloadsMutation: 0, downloadsBusy: new Set(), downloadSubmitting: false
@@ -91,17 +93,24 @@
     stateEl.classList.toggle('is-running', running);
     stateEl.classList.toggle('is-stopped', !running);
     $('span:last-child', stateEl).textContent = running ? '服务运行中' : '服务已停止';
-    $('#serviceToggle').textContent = running ? '停止服务' : '启动服务';
+    $('#serviceToggle').textContent = state.serviceBusy ? '处理中…' : running ? '停止服务' : '启动服务';
     $('#serviceToggle').dataset.action = running ? 'stop' : 'start';
-    $('#serviceToggle').disabled = false;
+    $('#serviceToggle').disabled = state.serviceBusy;
+    $('#serviceBanner').className = `service-banner ${running ? 'is-running' : 'is-stopped'}`;
+    $('#serviceBannerTitle').textContent = running ? '加速服务已开启' : '加速服务未开启 · 客户端尚未使用加速服务';
+    const lanIP = status?.addresses?.lanIP || state.config?.lanIP || '未配置';
+    $('#serviceBannerText').textContent = running
+      ? `DNS / HTTP${status?.addresses?.tls ? ' / TLS' : ''} 正在监听。请将下载客户端 DNS 设为 ${lanIP}。`
+      : status?.lastError ? `启动失败：${status.lastError}。检查端口占用和运行权限后重试。`
+        : '管理界面和测速可用。先选节点、保存设置，再点击“启动加速服务”；服务开启后再修改客户端 DNS。已设置 DNS 的客户端请暂时恢复自动获取。';
+    $('#bannerStart').hidden = running;
+    $('#bannerStart').disabled = state.serviceBusy;
     $('#metricDns').textContent = formatCount(status?.metrics?.dnsQueries);
     $('#metricHttp').textContent = formatCount(status?.metrics?.httpRedirects);
     $('#metricTls').textContent = formatCount(status?.metrics?.tlsConnections);
-    const lanIP = status?.addresses?.lanIP || state.config?.lanIP || '未配置';
     $('#metricAddress').textContent = lanIP;
     $('#helpAddress').textContent = lanIP;
     $('#statusUpdated').textContent = `更新于 ${new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`;
-    if (status?.lastError) setMessage(`服务错误：${status.lastError}`);
   }
 
   function pathValue(object, path) {
@@ -147,9 +156,15 @@
       renderStatus(await api('/api/status'));
     } catch (error) {
       if (state.token) {
+        state.status = null;
         $('#serviceState').classList.remove('is-running');
         $('#serviceState').classList.add('is-stopped');
         $('span:last-child', $('#serviceState')).textContent = '状态不可用';
+        $('#serviceToggle').disabled = true;
+        $('#serviceBanner').className = 'service-banner is-unknown';
+        $('#serviceBannerTitle').textContent = '无法确认加速服务状态';
+        $('#serviceBannerText').textContent = '与管理服务的连接暂时中断，正在重试。请检查服务进程和网络连接。';
+        $('#bannerStart').hidden = true;
       }
     }
   }
@@ -196,20 +211,34 @@
 
   function candidateKey(item) { return String(item.ip || '').trim(); }
 
+  function candidateFilters() {
+    return { query: $('#candidateSearch').value, province: $('#candidateProvince').value, carrier: $('#candidateCarrier').value };
+  }
+
   function visibleCandidates() {
-    const query = $('#candidateSearch').value.trim().toLocaleLowerCase();
-    return state.candidates.filter(item => `${item.ip || ''} ${item.location || ''}`.toLocaleLowerCase().includes(query));
+    const filters = candidateFilters();
+    return state.candidates.filter(item => matchesCandidate(item, filters));
+  }
+
+  function renderFilterHint(count) {
+    const limit = Number($('#autoTestLimit').value);
+    const maxBytes = Number(state.config?.test?.maxBytes) || 10485760;
+    const budget = Math.min(state.candidates.length ? count : limit, limit);
+    $('#regionHint').textContent = `${state.candidates.length ? `当前筛选匹配 ${count} 个节点。` : '自动测速会先加载候选。'}按省份、运营商和搜索条件抽样最多 ${limit} 个，流量上限约 ${(budget * maxBytes / 1048576).toFixed(0)} MiB。地区以候选源标注为准，未标注地区需手选；测完后手动应用并启动服务。`;
   }
 
   function resultSpeed(result) {
+    if (result?.error) return -1;
     const value = Number(result?.mbps);
     return Number.isFinite(value) && value >= 0 ? value : -1;
   }
 
   function renderCandidates() {
+    const visible = visibleCandidates();
+    renderFilterHint(visible.length);
     const rows = $('#candidateRows');
     rows.replaceChildren();
-    const list = visibleCandidates().map(item => ({ item, result: state.results.get(candidateKey(item)) }));
+    const list = visible.map(item => ({ item, result: state.results.get(candidateKey(item)) }));
     list.sort((a, b) => {
       const speedA = resultSpeed(a.result);
       const speedB = resultSpeed(b.result);
@@ -244,12 +273,12 @@
       const latencyCell = textNode('td', Number.isFinite(latency) && latency >= 0 ? `${latency.toFixed(1)} ms` : '—', 'mono');
       const speed = Number(result?.mbps);
       const mibPerSecond = speed / 8.388608;
-      const speedCell = textNode('td', Number.isFinite(speed) && speed >= 0 ? `${mibPerSecond.toFixed(2)} MiB/s` : '—', 'mono speed-value');
+      const speedCell = textNode('td', !result?.error && Number.isFinite(speed) && speed >= 0 ? `${mibPerSecond.toFixed(2)} MiB/s` : '—', 'mono speed-value');
       const outcome = result?.error ? result.error : result ? '完成' : '未测试';
       const stateCell = textNode('td', outcome, result?.error ? 'result-error' : result ? 'result-ok' : 'muted');
       const actionCell = document.createElement('td');
       const apply = textNode('button', '应用', 'text-button apply-button');
-      apply.type = 'button'; apply.disabled = Boolean(state.job);
+      apply.type = 'button'; apply.disabled = Boolean(state.job || state.testStarting || state.autoPreparing);
       apply.addEventListener('click', () => applyCandidate(ip, item.location || ''));
       actionCell.append(apply);
       row.append(selectCell, ipCell, locationCell, latencyCell, speedCell, stateCell, actionCell);
@@ -259,21 +288,22 @@
 
   function updateSelectionCount() {
     $('#selectedCount').textContent = `${state.selected.size}/128`;
-    $('#startTest').disabled = Boolean(state.job || state.testStarting || state.candidateLoading) || state.selected.size === 0;
+    updateTestControls();
   }
 
   function renderCandidateMeta(data) {
     const when = data.updatedAt ? new Date(data.updatedAt).toLocaleString('zh-CN') : '';
     const source = data.origin ? `来源：${data.origin}` : '';
     $('#candidateSummary').textContent = `${data.items?.length || 0} 个候选地址${source ? ` · ${source}` : ''}${when ? ` · 更新于 ${when}` : ''}`;
-    $('#candidateWarning').textContent = data.warning || '';
+    state.candidateSourceWarning = data.warning || '';
+    $('#candidateWarning').textContent = state.candidateSourceWarning;
   }
 
   function updateCandidateButtons() {
     const load = $('#loadCandidates');
     const refresh = $('#refreshCandidates');
     const busy = state.candidateLoading && state.candidateRequestMode;
-    const testing = Boolean(state.job || state.testStarting);
+    const testing = Boolean(state.job || state.testStarting || state.autoPreparing || state.importing);
     load.disabled = Boolean(busy || testing);
     refresh.disabled = Boolean(busy || testing);
     load.textContent = busy && state.candidateRequestMode === 'load' ? '加载中…' : '加载候选';
@@ -281,12 +311,17 @@
   }
 
   function updateTestControls() {
-    const busy = Boolean(state.job || state.testStarting);
+    const busy = Boolean(state.job || state.testStarting || state.autoPreparing || state.importing);
     $('#speedGroup').disabled = busy;
     $('#loadCandidates').disabled = busy || state.candidateLoading;
     $('#refreshCandidates').disabled = busy || state.candidateLoading;
-    $('#importCandidates').disabled = busy;
+    $('#importCandidates').disabled = busy || state.candidateLoading;
     $('#importText').disabled = busy;
+    $('#autoTest').disabled = busy || state.candidateLoading;
+    $('#autoTest').textContent = state.autoPreparing ? '正在准备…' : '按地区自动测速';
+    for (const id of ['candidateProvince', 'candidateCarrier', 'autoTestLimit', 'candidateSearch', 'selectVisible', 'clearSelection', 'testURL']) {
+      $(`#${id}`).disabled = busy;
+    }
     $('#startTest').disabled = busy || state.candidateLoading || state.selected.size === 0;
     $$('.apply-button').forEach(button => { button.disabled = busy; });
   }
@@ -313,7 +348,10 @@
       if (requestId !== state.candidateRequest || currentGroup !== state.group) return;
       state.candidates = Array.isArray(data.items) ? data.items : [];
       state.selected.clear(); state.results.clear();
+      $('#testProgress').hidden = true;
+      $('#testRecommendation').hidden = true;
       renderCandidateMeta(data); renderCandidates(); updateSelectionCount();
+      return true;
     } catch (error) {
       if (requestId === state.candidateRequest && currentGroup === state.group && state.token) {
         const message = error.name === 'AbortError' ? '候选地址请求超时，请稍后重试。' : `无法加载候选地址：${error.message}`;
@@ -338,26 +376,56 @@
     const group = state.group;
     const requestId = state.candidateRequest;
     const button = $('#importCandidates'); setButtonBusy(button, true, '正在导入…');
+    state.importing = true; updateTestControls();
     try {
       const data = await api('/api/candidates/import', { method: 'POST', body: { group, text } });
       if (state.page !== 'speed' || group !== state.group || requestId !== state.candidateRequest) return;
       state.candidates = Array.isArray(data.items) ? data.items : [];
       state.selected.clear(); state.results.clear();
+      $('#testProgress').hidden = true;
+      $('#testRecommendation').hidden = true;
       renderCandidateMeta(data); renderCandidates(); updateSelectionCount();
       $('#importText').value = '';
       closeImportPopover();
     } catch (error) {
       if (group === state.group && requestId === state.candidateRequest) $('#candidateWarning').textContent = `导入失败：${error.message}`;
     }
-    finally { setButtonBusy(button, false); }
+    finally { state.importing = false; setButtonBusy(button, false); updateTestControls(); }
+  }
+
+  async function autoTest() {
+    if (state.job || state.testStarting || state.autoPreparing || state.candidateLoading || state.importing) return;
+    $('#candidateWarning').textContent = state.candidateSourceWarning;
+    if (!$('#candidateProvince').value) {
+      $('#candidateWarning').textContent = '请先选择所在省份 / 地区，再自动测速。';
+      $('#candidateProvince').focus(); return;
+    }
+    if (!$('#testURL').value.trim()) {
+      $('#candidateWarning').textContent = '此域名组还没有测速 URL，请先填写真实可下载的资源地址。';
+      $('#testURL').focus(); return;
+    }
+    state.autoPreparing = true; updateTestControls();
+    try {
+      if (!state.candidates.length && !await loadCandidates(false)) return;
+      const chosen = selectForTest(state.candidates, candidateFilters(), Number($('#autoTestLimit').value));
+      if (!chosen.length) {
+        $('#candidateWarning').textContent = '没有匹配的地区节点。请放宽运营商或搜索条件，尝试其他省份，或手动导入带地区标注的候选。';
+        return;
+      }
+      state.selected = new Set(chosen.map(candidateKey));
+      renderCandidates(); updateSelectionCount();
+      await startTest();
+    } finally { state.autoPreparing = false; updateTestControls(); }
   }
 
   async function startTest() {
+    if (state.job || state.testStarting) return;
     const ips = [...state.selected].slice(0, 128);
     if (!ips.length) return;
     const testURL = $('#testURL').value.trim();
     if (!testURL) { setMessage('请填写有效的测速 URL。'); $('#testURL').focus(); return; }
     setMessage('');
+    $('#testRecommendation').hidden = true;
     state.testStarting = true;
     updateTestControls();
     try {
@@ -384,6 +452,15 @@
     $('#progressBar').max = Math.max(total, 1); $('#progressBar').value = Math.min(completed, total);
     if (Array.isArray(job.results)) {
       for (const result of job.results) state.results.set(String(result.ip), result);
+    }
+    if (!running) {
+      const best = bestResult(job.results || []);
+      $('#testRecommendation').hidden = false;
+      $('#applyBest').hidden = !best;
+      $('#applyBest').dataset.ip = best?.ip || '';
+      $('#recommendationText').textContent = best
+        ? `${job.state === 'cancelled' ? '测速已取消，已完成样本中' : '本轮'}最快：${best.ip} · ${(best.mbps / 8.388608).toFixed(2)} MiB/s。应用后请手动启动加速服务。`
+        : '本轮没有可用的测速结果。请检查测速 URL、候选节点或网络连接后重试。';
     }
     renderCandidates(); updateSelectionCount(); updateTestControls();
   }
@@ -415,7 +492,7 @@
   }
 
   async function applyCandidate(ip, location) {
-    if (state.job) return;
+    if (state.job || state.testStarting || state.autoPreparing) return;
     const button = $$('.apply-button').find(item => item.closest('tr')?.children[1]?.textContent === ip);
     if (button) { button.disabled = true; button.textContent = '应用中…'; }
     try {
@@ -861,14 +938,15 @@
     const button = $('#serviceToggle');
     const action = button.dataset.action;
     if (!action || button.disabled) return;
+    state.serviceBusy = true;
     button.disabled = true;
+    $('#bannerStart').disabled = true;
     button.textContent = action === 'start' ? '正在启动…' : '正在停止…';
     try {
-      await api(`/api/service/${action}`, { method: 'POST', body: {} });
-      await refreshStatus();
+      renderStatus(await api(`/api/service/${action}`, { method: 'POST', body: {} }));
       setMessage(action === 'start' ? '服务已启动。' : '服务已停止，请将下载客户端 DNS 手动恢复为自动获取。', 'success');
-    } catch (error) { setMessage(`服务${action === 'start' ? '启动' : '停止'}失败：${error.message}`); }
-    finally { button.disabled = false; }
+    } catch (error) { setMessage(`服务${action === 'start' ? '启动' : '停止'}失败：${error.message}`); await refreshStatus(); }
+    finally { state.serviceBusy = false; if (state.status) renderStatus(state.status); }
   }
 
   async function loadGroups() {
@@ -879,7 +957,7 @@
   }
 
   function changeGroup(group) {
-    if (group === state.group || state.job || state.testStarting) return;
+    if (group === state.group || state.job || state.testStarting || state.autoPreparing || state.importing) return;
     closeImportPopover();
     state.group = group;
     state.candidateRequest++;
@@ -889,6 +967,9 @@
     state.candidateRequestMode = '';
     updateCandidateButtons();
     state.candidates = []; state.selected.clear(); state.results.clear();
+    state.candidateSourceWarning = '';
+    $('#testProgress').hidden = true;
+    $('#testRecommendation').hidden = true;
     $('#candidateSummary').textContent = '尚未加载候选地址';
     $('#candidateWarning').textContent = '';
     $('#testURL').value = state.config?.groups?.[group]?.testURL || '';
@@ -932,15 +1013,27 @@
   }));
   $('.brand').addEventListener('click', event => { event.preventDefault(); activatePage('service'); });
   $('#serviceToggle').addEventListener('click', toggleService);
+  $('#bannerStart').addEventListener('click', toggleService);
   $('#configForm').addEventListener('submit', saveConfig);
   $('#downloadForm').addEventListener('submit', createDownload);
   $('#refreshDownloads').addEventListener('click', refreshDownloads);
   $('#speedGroup').addEventListener('change', event => changeGroup(event.target.value));
   $('#loadCandidates').addEventListener('click', () => loadCandidates(false));
   $('#refreshCandidates').addEventListener('click', () => loadCandidates(true));
-  $('#candidateSearch').addEventListener('input', renderCandidates);
+  function filtersChanged() {
+    $('#candidateWarning').textContent = state.candidateSourceWarning;
+    renderCandidates();
+  }
+  $('#candidateSearch').addEventListener('input', filtersChanged);
+  for (const province of provinces) $('#candidateProvince').append(new Option(province, province));
+  for (const id of ['candidateProvince', 'candidateCarrier', 'autoTestLimit']) $(`#${id}`).addEventListener('change', filtersChanged);
+  $('#autoTest').addEventListener('click', autoTest);
+  $('#applyBest').addEventListener('click', () => {
+    const ip = $('#applyBest').dataset.ip;
+    if (ip) applyCandidate(ip, state.candidates.find(item => item.ip === ip)?.location || '');
+  });
   $('#selectVisible').addEventListener('click', () => {
-    visibleCandidates().slice(0, Math.max(0, 128 - state.selected.size)).forEach(item => state.selected.add(candidateKey(item)));
+    state.selected = new Set(visibleCandidates().slice(0, 128).map(candidateKey));
     if (state.selected.size >= 128) $('#candidateWarning').textContent = '已达到每次测速 128 个地址的上限。';
     renderCandidates(); updateSelectionCount();
   });

@@ -111,12 +111,14 @@ func run(args []string) error {
 		return e
 	}
 	if command == "init" {
-		_, e = config.Token(*dir)
-		if e != nil {
-			return e
+		managementToken, err := config.Token(*dir)
+		if err != nil {
+			return err
 		}
 		fmt.Println("Configuration:", filepath.Join(*dir, "config.json"))
-		fmt.Println("Management token:", filepath.Join(*dir, "token"))
+		fmt.Println("Token file:", filepath.Join(*dir, "token"))
+		fmt.Println("Management token:", managementToken)
+		fmt.Println("Download services are OFF by default. Start them in WebUI after setup.")
 		return nil
 	}
 	if command == "doctor" {
@@ -377,6 +379,11 @@ func serve(dir, token string, c config.Config, start bool, downloadDir string) e
 		}
 	}
 	fmt.Printf("Xbox Download Proxy 0.1.0\nWebUI: http://%s%s\nToken: %s\nData: %s\n", c.LANIP, webPort(c.WebListen), token, dir)
+	if a.Status().Running {
+		fmt.Println("Download services: ON (DNS / HTTP / configured TLS)")
+	} else {
+		fmt.Println("Download services: OFF — open WebUI, finish setup, then start the service before changing client DNS.")
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	errs := make(chan error, 1)

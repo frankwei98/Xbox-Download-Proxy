@@ -3,6 +3,8 @@
 .dockerignore
 .DS_Store
 data
+**/data
+**/downloads
 dist
 xdp
 coverage.out

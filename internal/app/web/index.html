@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="light">
   <title>Xbox Download Proxy</title>
   <link rel="stylesheet" href="style.css">
-  <script src="app.js" defer></script>
+  <script src="app.js" type="module"></script>
 </head>
 <body>
   <div class="login-screen" id="loginScreen" hidden>
@@ -14,6 +14,7 @@
       <div class="brand-mark" aria-hidden="true">X</div>
       <h1>连接到管理界面</h1>
       <p>输入加速服务端访问令牌。令牌仅保存在当前浏览器会话中。</p>
+      <p class="token-help">运行 <code>./setup.sh</code> 后会显示管理 token；已有安装可查看数据目录内的 <code>token</code> 文件。</p>
       <label for="tokenInput">访问令牌</label>
       <input id="tokenInput" type="password" autocomplete="current-password" required>
       <button class="button primary" type="submit">连接</button>
@@ -44,6 +45,10 @@
       </nav>
 
       <main id="mainContent">
+        <aside class="service-banner is-unknown" id="serviceBanner" aria-live="polite" aria-atomic="true">
+          <div><strong id="serviceBannerTitle">正在确认加速服务状态…</strong><p id="serviceBannerText">请等待服务状态确认后再设置客户端 DNS。</p></div>
+          <button class="button primary" id="bannerStart" type="button" hidden>启动加速服务</button>
+        </aside>
         <div class="notice error" id="globalError" role="alert" hidden></div>
         <div class="notice success" id="globalNotice" role="status" hidden></div>
         <section class="page active" id="page-service" aria-labelledby="serviceTitle">
@@ -93,6 +98,7 @@
             </div>
             <div class="divider"></div>
             <div class="option-list">
+              <label class="check-row"><input type="checkbox" name="autoStart"><span><b>启动进程时自动开启加速服务</b><small>默认关闭；建议完成节点与网络设置后再启用。</small></span></label>
               <label class="check-row"><input type="checkbox" name="showLinks"><span><b>显示下载链接</b><small>在请求日志中显示完整请求链接。</small></span></label>
               <label class="check-row"><input type="checkbox" name="redirectToCN"><span><b>优先使用中国节点</b><small>在适用时使用中国区域下载节点。</small></span></label>
               <label class="check-row"><input type="checkbox" name="suppressAAAA"><span><b>下载域名优先 IPv4</b><small>只对受支持的下载域名返回空 AAAA 答复，其他域名正常转发。</small></span></label>
@@ -102,7 +108,7 @@
         </section>
 
         <section class="page" id="page-speed" aria-labelledby="speedTitle" hidden>
-          <div class="page-heading"><div><h1 id="speedTitle">下载节点测速</h1><p>选择候选地址并比较实际下载表现，再手动应用合适的节点。</p></div></div>
+          <div class="page-heading"><div><h1 id="speedTitle">下载节点测速</h1><p>按省份和运营商筛选并自动测速，或手动选择候选；测完后应用合适的节点。</p></div></div>
           <div class="panel speed-controls">
             <div class="control-row">
               <label class="field inline-field"><span>下载域名组</span><select id="speedGroup"><option value="global">全局</option><option value="cn1">cn1</option><option value="cn2">cn2</option><option value="store">Microsoft Store</option></select></label>
@@ -111,12 +117,20 @@
               <details class="import-details"><summary>手动导入</summary><div class="import-box"><label for="importText">每行一个 IP，可附带空格和位置说明</label><textarea id="importText" rows="4" placeholder="203.0.113.10 上海 / 联通"></textarea><button class="button secondary" id="importCandidates" type="button">导入候选</button></div></details>
             </div>
             <div class="candidate-meta"><span id="candidateSummary">尚未加载候选地址</span><span id="candidateWarning" class="warning-text"></span></div>
+            <div class="region-controls">
+              <label class="field"><span>所在省份 / 地区</span><select id="candidateProvince"><option value="">全部地区（请选择）</option></select></label>
+              <label class="field"><span>运营商</span><select id="candidateCarrier"><option value="">全部运营商</option><option value="联通">联通</option><option value="电信">电信</option><option value="移动">移动</option><option value="广电">广电</option></select></label>
+              <label class="field"><span>自动测速上限</span><select id="autoTestLimit"><option value="8">8 个节点</option><option value="16" selected>16 个节点</option><option value="32">32 个节点</option><option value="64">64 个节点</option><option value="128">128 个节点</option></select></label>
+              <button class="button primary" id="autoTest" type="button">按地区自动测速</button>
+            </div>
+            <p class="region-hint" id="regionHint">选择所在省份，可自动加载候选并测速。地区以候选源标注为准；默认最多测试 16 个，不会自动应用节点或开启加速服务。</p>
             <div class="filter-row">
-              <label class="search-field"><span class="sr-only">搜索地区或运营商</span><svg aria-hidden="true" viewBox="0 0 20 20"><circle cx="8.5" cy="8.5" r="5.5"></circle><path d="m13 13 4 4"></path></svg><input id="candidateSearch" type="search" placeholder="搜索地区或运营商"></label>
+              <label class="search-field"><span class="sr-only">搜索 IP、地区或运营商，可用空格分隔关键词</span><svg aria-hidden="true" viewBox="0 0 20 20"><circle cx="8.5" cy="8.5" r="5.5"></circle><path d="m13 13 4 4"></path></svg><input id="candidateSearch" type="search" placeholder="如：广东 联通（空格分隔关键词）"></label>
               <button class="text-button" id="selectVisible" type="button">仅选可见</button><button class="text-button" id="clearSelection" type="button">清空选择</button>
             </div>
             <div class="test-url-row"><label class="field url-field"><span>测速 URL</span><input id="testURL" type="url" placeholder="读取组配置中…"></label><div class="test-actions"><button class="button primary" id="startTest" type="button" disabled>测试选中 <span id="selectedCount">0</span></button><button class="button danger-outline" id="cancelTest" type="button" hidden>取消测试</button></div></div>
             <div class="progress-wrap" id="testProgress" hidden><div class="progress-label"><span id="progressText">测速中</span><span class="mono" id="progressCount">0 / 0</span></div><progress id="progressBar" max="1" value="0"></progress></div>
+            <div class="recommendation" id="testRecommendation" role="status" hidden><span id="recommendationText"></span><button class="button secondary compact apply-button" id="applyBest" type="button">应用最快节点</button></div>
           </div>
           <div class="panel table-panel">
             <div class="table-scroll"><table class="data-table speed-table"><thead><tr><th class="select-col"><span class="sr-only">选择</span></th><th>IP 地址</th><th>位置 / 运营商</th><th>首包延迟</th><th>速度</th><th>状态</th><th>操作</th></tr></thead><tbody id="candidateRows"><tr><td colspan="7" class="empty-cell">加载候选地址后开始测速。</td></tr></tbody></table></div>
