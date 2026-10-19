@@ -51,7 +51,11 @@ while [ "$#" -gt 0 ]; do
     --lan-ip) [ "$#" -ge 2 ] || fail "--lan-ip requires a value"; lan_ip=$2; shift 2 ;;
     --web-port) [ "$#" -ge 2 ] || fail "--web-port requires a value"; web_port=$2; web_port_set=1; shift 2 ;;
     --offline) [ "$#" -ge 2 ] || fail "--offline requires yes or no"; offline=$2; offline_set=1; shift 2 ;;
-    --binary) [ "$#" -ge 2 ] && [ -n "$2" ] || fail "--binary requires a path"; prebuilt=$2; shift 2 ;;
+    --binary)
+      if [ "$#" -lt 2 ] || [ -z "$2" ]; then
+        fail "--binary requires a path"
+      fi
+      prebuilt=$2; shift 2 ;;
     --install-deps) install_deps=1; shift ;;
     --yes) yes=1; shift ;;
     --start) start=1; shift ;;
@@ -124,7 +128,9 @@ for octet in "$@"; do
   [ "$octet" -le 255 ] || fail "invalid IPv4 address: $lan_ip"
 done
 first_octet=$1
-[ "$first_octet" -ne 0 ] && [ "$first_octet" -ne 127 ] && [ "$first_octet" -lt 224 ] || fail "LAN IPv4 address cannot be unspecified, loopback, multicast, or reserved: $lan_ip"
+if [ "$first_octet" -eq 0 ] || [ "$first_octet" -eq 127 ] || [ "$first_octet" -ge 224 ]; then
+  fail "LAN IPv4 address cannot be unspecified, loopback, multicast, or reserved: $lan_ip"
+fi
 
 if [ "$has_tty" -eq 1 ] && [ "$web_port_set" -eq 0 ]; then
   printf 'Web/API port [%s]: ' "$web_port"
@@ -134,7 +140,9 @@ fi
 case "$web_port" in ''|*[!0-9]*) fail "Web port must be an integer from 1 to 65535" ;; esac
 [ "${#web_port}" -le 5 ] || fail "Web port must be an integer from 1 to 65535"
 [ "${#web_port}" -eq 1 ] || [ "${web_port#0}" = "$web_port" ] || fail "Web port must not contain leading zeroes"
-[ "$web_port" -ge 1 ] && [ "$web_port" -le 65535 ] || fail "Web port must be an integer from 1 to 65535"
+if [ "$web_port" -lt 1 ] || [ "$web_port" -gt 65535 ]; then
+  fail "Web port must be an integer from 1 to 65535"
+fi
 case "$web_port" in 53|80|443) fail "Web port must not conflict with DNS/HTTP/TLS port $web_port" ;; esac
 
 if [ "$has_tty" -eq 1 ] && [ "$mode" = compose ] && [ "$start" -eq 0 ]; then
@@ -205,14 +213,18 @@ if [ "$mode" = native ]; then
   trap 'rm -f "$staged"' EXIT
   trap 'exit 1' HUP INT TERM
   if [ -n "$prebuilt" ]; then
-    [ -f "$prebuilt" ] && [ -r "$prebuilt" ] || fail "cannot read --binary file: $prebuilt"
+    if [ ! -f "$prebuilt" ] || [ ! -r "$prebuilt" ]; then
+      fail "cannot read --binary file: $prebuilt"
+    fi
     cp "$prebuilt" "$staged" || fail "could not copy prebuilt binary"
   elif command -v go >/dev/null 2>&1; then
     go_version=$(GOTOOLCHAIN=local go version) || fail "could not run Go; use Go >= 1.24 or --binary PATH"
     case "$go_version" in
       *' go1.'*)
         minor=${go_version#* go1.}; minor=${minor%%[!0-9]*}
-        [ -n "$minor" ] && [ "$minor" -ge 24 ] || fail "Go >= 1.24 is required ($go_version); distribution packages may be older. Use --binary PATH or install a newer Go toolchain"
+        if [ -z "$minor" ] || [ "$minor" -lt 24 ]; then
+          fail "Go >= 1.24 is required ($go_version); distribution packages may be older. Use --binary PATH or install a newer Go toolchain"
+        fi
         ;;
       *' go2.'*|*' devel '*) ;;
       *) fail "cannot determine Go version: $go_version" ;;
