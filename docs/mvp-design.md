@@ -29,7 +29,7 @@ MVP 不包含硬盘格式化/分区工具、商店商品目录、向主机回传
 - HTTP 80 只处理已支持的下载域名重定向，不提供任意反代。保留请求路径和查询参数。
 - 可选 TLS 443 按 ClientHello 中的已知下载域名，原样转发到该组指定 IP 或原域名的上游 DNS 结果；不生成 CA、不解密、不对 HTTPS 改域名。这是兼容性处理，不是把 OpenWrt 的 80 端口规则扩展到 HTTPS。
 - 默认候选源引用参考项目公开 GitHub 文本列表 URL；本仓库不附带其源码或 IP 表快照。支持替换 HTTPS 来源和手动导入；下载失败使用已有缓存，无缓存时尝试 DNS 发现并提示范围有限。
-- global/cn1 配置公开 Xbox 测试资源 URL；cn2/store 需要实际下载 URL，避免依赖作者商店 API。Microsoft Store 的 DNS 指定 IP 功能不依赖测试 URL。
+- global/cn1/cn2 配置公开 Xbox 测试资源 URL；store 需要实际下载 URL，避免依赖作者商店 API。Microsoft Store 的 DNS 指定 IP 功能不依赖测试 URL。
 - 测速直连指定 IP、保留原 Host 与 HTTPS 证书校验；禁用重定向与压缩。每轮最多 128 个候选，默认并发 2、单节点 5 秒及 10 MiB 上限，支持取消。
 - 首包延迟是取得 HTTP 响应头所用时间，包含连接；速度展示 MiB/s，API mbps 为十进制 Mbit/s。实际下载数据由客户端直连 CDN，不展示伪造的游戏下载速度。
 - 运行日志只保留内存中最近 500 条，不向作者或其他后端上传。只有开启显示链接时记录完整 Xbox HTTP URL；HTTPS 不可见具体下载路径。

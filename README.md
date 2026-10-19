@@ -10,13 +10,17 @@ DNS 可把受控下载域名解析到用户为域名组指定的 CDN IP。需要
 
 服务会尝试从配置中指定的公开在线文本源读取候选 IP；默认引用 [参考项目的在线 IP 列表](https://github.com/skydevil88/XboxDownload/tree/master/IP)，本仓库没有附带其列表副本。下载成功后可用缓存，更新失败会保留旧缓存；无缓存时回退到当前域名的 DNS 结果并显示警告。可以在 WebUI 配置自己的 HTTPS 文本源，也可以导入 IP 列表。首次使用没有缓存时需要联网；候选源的可用性和更新由其提供方决定。项目不调用参考项目作者的商店 API，不做遥测，也不上传下载链接或测速数据。
 
-候选节点测速需要由服务端访问测试 URL，并按用户提供的 IP 发起测试。`cn1` 默认使用 `http://assets1.xboxlive.cn/Z/routing/extraextralarge.txt`，`global` 默认使用 `http://assets1.xboxlive.com/Z/routing/extraextralarge.txt`。`cn2` 和 `store` 没有默认测试 URL，需要在配置中填写真实可下载的测试资源 URL；未填写时会明确提示无法测速。Store 也可以不测速，直接指定 IP。
+候选节点测速需要由服务端访问测试 URL，并按用户提供的 IP 发起测试。`cn1` 默认使用 `http://assets1.xboxlive.cn/Z/routing/extraextralarge.txt`，`cn2` 默认使用 `http://assets2.xboxlive.cn/Z/routing/extraextralarge.txt`，`global` 默认使用 `http://assets1.xboxlive.com/Z/routing/extraextralarge.txt`。`store` 没有默认测试 URL，需要在配置中填写真实可下载的测试资源 URL；未填写时会明确提示无法测速。Store 也可以不测速，直接指定 IP。
 
 吞吐测试结果只代表该测试 URL、该 IP 和当时网络条件下的测试表现，不能作为游戏实时下载速度或实际 CDN 命中情况的保证。
 
 ## 离线下载
 
-可以把可直接访问的 HTTP(S) 下载 URL 交给服务端后台下载，文件保存在服务端磁盘，之后从 NAS 目录访问或取回到本机。针对 Xbox/Store 下载域名，服务会使用已选 CDN IP；HTTP Xbox 全球链接沿用已配置的国内跳转规则，HTTPS 保留原始 Host、TLS SNI 和证书校验。它不登录账号、抓取商店目录或安装内容。
+离线下载与 Xbox 本地回传是可选功能，默认关闭。只需 302 到 Xbox 中国 CDN 的用户可保持关闭，不会打开下载库或启动下载队列。安装引导会询问，也可在 WebUI 服务设置启用，或执行 `xdp init --data-dir ./data --offline=true`。
+
+启用后，把监听日志中的 Xbox HTTP 链接加入离线下载，暂停 Xbox 下载并等待 NAS 下载完成，再启动加速服务、让 Xbox 继续下载。命中完整资源时直接由 NAS 返回文件，支持 HEAD 和 Range；未命中继续 CDN 路径。回传模式会把受支持 Xbox 域名指向 NAS，最终 CDN 域名的未命中请求由 NAS 转发，避免循环。关闭该功能后恢复原有 DNS/302 路由，已有任务和文件保留。
+
+后台任务也可下载其他公网 HTTP(S) URL，供 WebUI/CLI 取回；首版向 Xbox 回传仅支持 Xbox HTTP 资源，HTTPS 仍使用原站证书透传，不解密或本地回传。它不登录账号、抓取商店目录或安装内容。
 
 最多两个任务同时下载，其余任务排队。任务支持暂停、继续、取消和删除；任务元数据持久化，服务重启后原先运行/排队的任务会暂停，等待用户恢复。支持 HTTP Range 与 If-Range 续传；源站不支持 Range、缺少可验证标识或返回完整的新资源时，从头下载。下载时保留 256 MiB 空间预算；已知大小会预先检查，未知大小会在下载中持续检查，空间不足时暂停。容量显示包含下载目录所在文件系统的总量、已用、可用空间和本工具文件大小总计。
 
@@ -29,7 +33,7 @@ DNS 可把受控下载域名解析到用户为域名组指定的 CDN IP。需要
 | 端口 | 协议 | 用途 |
 | --- | --- | --- |
 | 53 | UDP、TCP | DNS |
-| 80 | TCP | Xbox HTTP 重定向 |
+| 80 | TCP | Xbox HTTP 重定向、可选的本地回传 |
 | 443 | TCP | 可选的 HTTPS SNI 转发 |
 | 8080 | TCP | Web UI 与管理 API |
 
@@ -45,7 +49,7 @@ IPv6 对受控域名可能返回空 AAAA 答案，以避免绕过 IPv4 节点选
 ./setup.sh
 ```
 
-脚本引导选择本机安装或 Docker Compose、安装目录、服务端 LAN IPv4 和管理端口。默认安装到 `~/.local/share/xdp`，完成后直接显示 **WebUI 地址、管理 token 和启动命令**。已有配置与 token 会保留；更新生成的二进制、启动脚本或 Compose 文件时会先确认。脚本不会修改系统 DNS 或自动提权。
+脚本引导选择本机安装或 Docker Compose、安装目录、服务端 LAN IPv4、管理端口，以及是否启用离线下载和 Xbox 本地回传。该功能默认关闭；已有配置在此项留空时保持原值。默认安装到 `~/.local/share/xdp`，完成后直接显示 **WebUI 地址、管理 token 和启动命令**。已有配置与 token 会保留；更新生成的二进制、启动脚本或 Compose 文件时会先确认。脚本不会修改系统 DNS 或自动提权。
 
 本机模式有 Go 时优先从当前源码编译，避免误用旧的本地构建产物；需要 Go 1.24 或更新版本。没有 Go 时使用项目根目录已有的 `xdp`。生成的 `start.sh` 用于前台运行 Web/API；如启用 53/80/443 时提示权限不足，先用 Ctrl+C 停止前台进程，再按脚本给出的 `sudo` 命令重启，之后在 WebUI 启用加速服务。Compose 模式需要 Docker 与 `docker compose`，使用本地 Dockerfile 构建，主要面向 Linux NAS；生成文件引用当前仓库的绝对路径，后续重建镜像需要保留仓库。
 
@@ -54,6 +58,9 @@ IPv6 对受控域名可能返回空 AAAA 答案，以避免绕过 IPv4 节点选
 ```sh
 ./setup.sh --mode native --lan-ip 192.168.1.10
 ./setup.sh --mode compose --lan-ip 192.168.1.10 --install-dir ./deployment
+# 非交互启用或关闭离线下载与 Xbox 本地回传
+./setup.sh --mode compose --lan-ip 192.168.1.10 --offline yes
+./setup.sh --mode native --lan-ip 192.168.1.10 --offline no
 # Compose 初始化后立即启动 Web/API（新安装的加速服务仍保持关闭）
 ./setup.sh --mode compose --lan-ip 192.168.1.10 --install-dir ./deployment --yes --start
 ./setup.sh --help
@@ -65,7 +72,7 @@ IPv6 对受控域名可能返回空 AAAA 答案，以避免绕过 IPv4 节点选
 2. 比较结果，点击“应用最快节点”或手动应用其他节点。只推荐成功且有有效吞吐的结果；应用节点会停止加速服务。
 3. 检查网络设置，点击醒目状态提示中的“启动加速服务”。确认显示“加速服务已开启”后，再将 Xbox / Windows 的 DNS 设置为服务端 LAN IP。
 
-搜索支持空格分隔的多个关键词，例如 `广东 联通` 可以匹配 `广东深圳 联通`，关键词顺序不限。省份和运营商信息来自候选源标注，不使用定位权限，也不保证同省节点一定最快。自动测速会显示流量预算，不会自动应用节点或启用 DNS/HTTP(S)。`cn2` 和 Microsoft Store 需先填写真实下载 URL。
+搜索支持空格分隔的多个关键词，例如 `广东 联通` 可以匹配 `广东深圳 联通`，关键词顺序不限。省份和运营商信息来自候选源标注，不使用定位权限，也不保证同省节点一定最快。自动测速会显示流量预算，不会自动应用节点或启用 DNS/HTTP(S)。Microsoft Store 需先填写真实下载 URL。
 
 ## 手动原生安装
 

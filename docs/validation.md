@@ -36,10 +36,19 @@
 - 通过真实 Docker Compose CLI 解析生成的配置，核对绝对构建路径、host 网络、带空格/引号/美元符号的挂载路径与默认启动参数；镜像构建和容器运行仍未实测。
 - Playwright / headless Chromium 对本地高端口实例验证多关键词搜索、地区无匹配提示、自动选择 16 个节点、最快有效结果推荐、应用后保持关闭、手动启停、管理连接中断与恢复，以及 375px 布局，无页面 JavaScript 异常。候选和测速响应使用 fixture，不访问真实游戏下载 CDN。
 
+## 可选本地回传验证（2026-10-19）
+
+- `go test -race ./...`：实际 HTTP fixture 下载后按原始资源匹配，CDN 别名与版本路径签名变化、重启后的查找、文件大小变化拒绝；完整文件回传、HEAD、正向与后缀 Range、416、并发分段读取和本地计数。
+- 本机 DNS/HTTP fixture 验证回传模式的 Xbox 域名映射、空 AAAA、未命中时 HTTP 302，以及最终 CDN 别名通过选定 IP 转发并保持签名查询和 Range；非局域网及未知域名拒绝。
+- 默认关闭不创建下载库，管理 API 禁止创建任务；开关切换保留任务和文件。CLI 初始化显式 true/false 生效，未指定保留现值。cn2 空测速 URL 自动补默认，已有自定义 URL 保留。
+- 安装脚本 mock 测试覆盖 native / Compose 的 `--offline yes|no` 转发，缺省不覆盖配置；`bash -n`、JavaScript 语法检查、地区筛选测试、`go vet` 与构建通过。
+- Playwright / headless Chromium 连接本地高端口实例，验证默认关闭、WebUI 启用与服务未启动提示、实际 HTTP Range 内容与 57 字节计数、日志“加入离线下载”预填、关闭后文件保留和 375px 布局；无页面 JavaScript 异常。完成文件为预置 fixture，未连接真实游戏下载 CDN。
+- 在临时目录实际执行 native 安装的开启、保留选择、关闭、再次保留选择，确认 `offlineEnabled`、token 和 `autoStart`，尚未运行时不创建下载库。
+
 ## 尚未验证
 
 - 当前环境 Docker daemon 未运行，因此没有完成镜像构建、容器启动或 NAS 安装验证。
 - 未进行 Xbox 主机、Windows Xbox App 或 Microsoft Store 的实际下载、断点续传及优选收益测试；由用户按 [手工验收清单](manual-test.md) 自行验证。
 - 候选 IP 列表和默认测速资源的大陆网络可达性及每个实际游戏的 CDN 缓存命中，不属于本地 fixture 测试可证明的事实。
 
-cn2/store 不依赖作者商店 API 获取测试资源，首次测速需要用户提供真实可下载 URL。Microsoft Store 域名的 DNS 指定 IP 功能不依赖该 URL。
+cn2 使用公开 Xbox 测试资源 URL；store 不依赖作者商店 API 获取测试资源，首次测速需要用户提供真实可下载 URL。Microsoft Store 域名的 DNS 指定 IP 功能不依赖该 URL。

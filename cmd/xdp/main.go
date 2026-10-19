@@ -81,6 +81,7 @@ func run(args []string) error {
 	upstream := f.String("upstream", "", "upstream DNS IP:port")
 	start := f.Bool("start", false, "start download services with management server")
 	downloadDir := f.String("download-dir", "", "serve: download directory (default data-dir/downloads)")
+	offlineEnabled := f.Bool("offline", false, "init/serve: enable optional offline downloads and Xbox HTTP local delivery")
 	source := f.String("source", "", "offline download HTTP(S) URL")
 	name := f.String("name", "", "optional offline download filename")
 	id := f.String("id", "", "offline task ID")
@@ -111,6 +112,14 @@ func run(args []string) error {
 		return e
 	}
 	if command == "init" {
+		f.Visit(func(fl *flag.Flag) {
+			if fl.Name == "offline" {
+				c.OfflineEnabled = *offlineEnabled
+			}
+		})
+		if e := config.Save(*dir, c); e != nil {
+			return e
+		}
 		managementToken, err := config.Token(*dir)
 		if err != nil {
 			return err
@@ -118,6 +127,7 @@ func run(args []string) error {
 		fmt.Println("Configuration:", filepath.Join(*dir, "config.json"))
 		fmt.Println("Token file:", filepath.Join(*dir, "token"))
 		fmt.Println("Management token:", managementToken)
+		fmt.Printf("Offline downloads and Xbox HTTP local delivery: %t\n", c.OfflineEnabled)
 		fmt.Println("Download services are OFF by default. Start them in WebUI after setup.")
 		return nil
 	}
@@ -139,6 +149,8 @@ func run(args []string) error {
 				c.TLSListen = *tls
 			case "upstream":
 				c.UpstreamDNS = *upstream
+			case "offline":
+				c.OfflineEnabled = *offlineEnabled
 			}
 		})
 		if e = config.Save(*dir, c); e != nil {

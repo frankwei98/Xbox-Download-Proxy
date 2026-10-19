@@ -29,11 +29,18 @@ for arg in "$@"; do printf '\t%s' "$arg" >> "$MOCK_LOG"; done
 printf '\n' >> "$MOCK_LOG"
 if [ "${1-}" = init ]; then
   data_dir=
+  offline=
   while [ "$#" -gt 0 ]; do
-    if [ "$1" = --data-dir ]; then data_dir=$2; shift 2; else shift; fi
+    case "$1" in
+      --data-dir) data_dir=$2; shift 2 ;;
+      --offline=*) offline=${1#--offline=}; shift ;;
+      *) shift ;;
+    esac
   done
   mkdir -p "$data_dir"
   if [ ! -f "$data_dir/token" ]; then printf '%s\n' "$MOCK_TOKEN" > "$data_dir/token"; fi
+  if [ -n "$offline" ]; then printf '%s\n' "$offline" > "$data_dir/offline";
+  elif [ ! -f "$data_dir/offline" ]; then printf 'false\n' > "$data_dir/offline"; fi
 fi
 BIN
 chmod +x "$out"
@@ -63,8 +70,9 @@ quote_sh() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
 # Native supports hostile-looking literal paths, preserves initialized token on updates,
 # and the generated launcher passes the original values as individual arguments.
 native_dir="$tmp/xdp path 'quoted' \$(echo should-not-run)"
-"$runner/setup.sh" --mode native --install-dir "$native_dir" --lan-ip 192.168.1.25 --web-port 18080 --yes > "$tmp/native.out"
+"$runner/setup.sh" --mode native --install-dir "$native_dir" --lan-ip 192.168.1.25 --web-port 18080 --offline yes --yes > "$tmp/native.out"
 assert test "$(cat "$native_dir/data/token")" = "$MOCK_TOKEN"
+assert test "$(cat "$native_dir/data/offline")" = true
 assert bash -n "$native_dir/start.sh"
 assert contains "$(cat "$native_dir/start.sh")" "\$(echo should-not-run)"
 assert contains "$(cat "$tmp/native.out")" "Start Web/API with: $(quote_sh "$native_dir/start.sh")"
@@ -77,6 +85,9 @@ assert contains "$(cat "$MOCK_LOG")" "192.168.1.25"
 assert contains "$(cat "$MOCK_LOG")" ":18080"
 "$runner/setup.sh" --mode native --install-dir "$native_dir" --lan-ip 192.168.1.25 --yes > "$tmp/native-again.out"
 assert test "$(cat "$native_dir/data/token")" = "$MOCK_TOKEN"
+assert test "$(cat "$native_dir/data/offline")" = true
+"$runner/setup.sh" --mode native --install-dir "$tmp/native-offline-no" --lan-ip 192.168.1.25 --offline no --yes > "$tmp/native-offline-no.out"
+assert test "$(cat "$tmp/native-offline-no/data/offline")" = false
 if "$runner/setup.sh" --mode native --install-dir "$native_dir" --lan-ip 192.168.1.25 > "$tmp/refuse.out" 2>&1; then
   printf 'FAIL: native overwrite without --yes was accepted\n' >&2; exit 1
 fi
@@ -96,6 +107,7 @@ if contains "$(cat "$compose_dir/compose.yaml")" "--start"; then printf 'FAIL: C
 log=$(cat "$MOCK_LOG")
 assert contains "$log" $'compose\t-f'
 assert contains "$log" $'run\t--rm\txdp\tinit'
+if contains "$log" "--offline="; then printf 'FAIL: Compose default overrode existing offline setting\n' >&2; exit 1; fi
 if contains "$log" $'up\t-d'; then printf 'FAIL: Compose started by default\n' >&2; exit 1; fi
 assert contains "$(cat "$tmp/compose.out")" "Management token: $MOCK_TOKEN"
 assert contains "$(cat "$tmp/compose.out")" "New installations leave DNS and HTTP services stopped by default"
@@ -103,6 +115,12 @@ assert contains "$(cat "$tmp/compose.out")" "Existing configuration is preserved
 assert contains "$(cat "$tmp/compose.out")" "docker compose -f $(quote_sh "$compose_dir/compose.yaml") up -d"
 "$runner/setup.sh" --mode compose --install-dir "$compose_dir" --lan-ip 10.0.0.9 --yes > "$tmp/compose-again.out"
 assert contains "$(cat "$tmp/compose-again.out")" "Management token: $MOCK_TOKEN"
+: > "$MOCK_LOG"
+"$runner/setup.sh" --mode compose --install-dir "$tmp/compose-offline-yes" --lan-ip 10.0.0.9 --offline yes --yes > "$tmp/compose-offline-yes.out"
+assert contains "$(cat "$MOCK_LOG")" "--offline=true"
+: > "$MOCK_LOG"
+"$runner/setup.sh" --mode compose --install-dir "$tmp/compose-offline-no" --lan-ip 10.0.0.9 --offline no --yes > "$tmp/compose-offline-no.out"
+assert contains "$(cat "$MOCK_LOG")" "--offline=false"
 
 # Explicit Compose startup starts only Web/API; invalid input and missing tooling fail cleanly.
 : > "$MOCK_LOG"

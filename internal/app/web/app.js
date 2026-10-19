@@ -13,7 +13,7 @@ import { provinces, matchesCandidate, selectForTest, bestResult } from './node-s
     candidateController: null, candidateRequestMode: '', candidateLoading: false, candidateSourceWarning: '',
     logs: [], lastLogID: 0, logsStarted: false, configLoaded: false, statusTimer: null,
     downloads: [], storage: null, downloadsTimer: null, downloadsLoading: false,
-    downloadsMutation: 0, downloadsBusy: new Set(), downloadSubmitting: false
+    downloadsMutation: 0, downloadsBusy: new Set(), downloadSubmitting: false, delivery: null
   };
   const groupNames = { global: '全局', cn1: 'cn1', cn2: 'cn2', store: 'Microsoft Store' };
 
@@ -108,6 +108,7 @@ import { provinces, matchesCandidate, selectForTest, bestResult } from './node-s
     $('#metricDns').textContent = formatCount(status?.metrics?.dnsQueries);
     $('#metricHttp').textContent = formatCount(status?.metrics?.httpRedirects);
     $('#metricTls').textContent = formatCount(status?.metrics?.tlsConnections);
+    renderDelivery(state.delivery);
     $('#metricAddress').textContent = lanIP;
     $('#helpAddress').textContent = lanIP;
     $('#statusUpdated').textContent = `更新于 ${new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`;
@@ -138,6 +139,7 @@ import { provinces, matchesCandidate, selectForTest, bestResult } from './node-s
     const groupConfig = config.groups?.[state.group];
     $('#testURL').value = groupConfig?.testURL || '';
     $('#testURL').placeholder = groupConfig?.testURL ? '' : '未配置测速 URL';
+    renderDelivery(state.delivery);
   }
 
   async function loadConfig() {
@@ -519,6 +521,21 @@ import { provinces, matchesCandidate, selectForTest, bestResult } from './node-s
     return ({ queued: '排队中', running: '下载中', paused: '已暂停', completed: '已完成', failed: '失败', cancelled: '已取消' })[value] || String(value || '未知');
   }
 
+  function renderDelivery(delivery = state.delivery) {
+    const enabled = Boolean(state.config?.offlineEnabled ?? delivery?.enabled);
+    const running = Boolean(state.status?.running ?? delivery?.running);
+    const hits = state.status?.metrics?.localHits ?? delivery?.hits;
+    const bytes = state.status?.metrics?.localBytes ?? delivery?.bytes;
+    $('#deliveryPanel').classList.toggle('is-active', enabled && running);
+    $('#deliveryState').textContent = !enabled
+      ? '离线下载已关闭，当前仅提供节点加速。可在服务设置中启用“离线下载与 Xbox 本地回传”。'
+      : !running ? '回传已配置，但加速服务未启动。启动服务后即可回传已完成的 Xbox HTTP 资源。'
+        : '回传运行中：已完成且受支持的 Xbox HTTP 资源可由 Xbox 继续下载。';
+    $('#deliveryHits').textContent = formatCount(hits);
+    $('#deliveryBytes').textContent = formatStorageBytes(bytes);
+    $('#createDownload').disabled = !enabled || state.downloadSubmitting;
+  }
+
   function setDownloadsMessage(message, kind = 'error') {
     const error = $('#downloadsError');
     const notice = $('#downloadsNotice');
@@ -582,7 +599,14 @@ import { provinces, matchesCandidate, selectForTest, bestResult } from './node-s
       }
       row.append(nameCell);
       const taskState = textNode('span', downloadStateLabel(task.state), `download-state state-${task.state}`);
-      const stateCell = document.createElement('td'); stateCell.append(taskState); row.append(stateCell);
+      const stateCell = document.createElement('td'); stateCell.append(taskState);
+      if (task.state === 'completed') {
+        const deliveryLabel = !task.localReady ? '格式不支持回传或文件不可用'
+          : !(state.config?.offlineEnabled ?? state.delivery?.enabled) ? '未开启回传'
+            : !(state.status?.running ?? state.delivery?.running) ? '服务未启动' : '可回传';
+        stateCell.append(textNode('small', deliveryLabel, 'delivery-task-state'));
+      }
+      row.append(stateCell);
       const received = formatStorageBytes(task.bytes);
       const totalBytes = Number(task.totalBytes);
       const expected = Number.isFinite(totalBytes) && totalBytes >= 0 ? formatStorageBytes(totalBytes) : '未知';
@@ -640,6 +664,8 @@ import { provinces, matchesCandidate, selectForTest, bestResult } from './node-s
       const data = await api('/api/downloads');
       if (state.page !== 'downloads' || revision !== state.downloadsMutation) return;
       state.downloads = Array.isArray(data.tasks) ? data.tasks : [];
+      state.delivery = data.delivery || state.delivery;
+      renderDelivery(state.delivery);
       renderStorage(data.storage);
       renderDownloads();
       if ($('#downloadsError').textContent.startsWith('读取离线下载状态失败：')) $('#downloadsError').hidden = true;
@@ -665,6 +691,10 @@ import { provinces, matchesCandidate, selectForTest, bestResult } from './node-s
   async function createDownload(event) {
     event.preventDefault();
     if (state.downloadSubmitting) return;
+    if (!(state.config?.offlineEnabled ?? state.delivery?.enabled)) {
+      setDownloadsMessage('请先在服务设置中启用“离线下载与 Xbox 本地回传”。');
+      return;
+    }
     const rawURL = $('#downloadURL').value.trim();
     let url;
     try { url = new URL(rawURL); }
@@ -688,6 +718,7 @@ import { provinces, matchesCandidate, selectForTest, bestResult } from './node-s
     finally {
       state.downloadSubmitting = false;
       setButtonBusy(button, false);
+      renderDelivery(state.delivery);
       renderDownloads();
     }
   }
@@ -845,6 +876,13 @@ import { provinces, matchesCandidate, selectForTest, bestResult } from './node-s
           catch { copy.textContent = '无法复制'; }
         });
         detail.append(copy);
+        const offline = textNode('button', '加入离线下载', 'text-button copy-button'); offline.type = 'button';
+        offline.addEventListener('click', () => {
+          $('#downloadURL').value = String(item.url);
+          activatePage('downloads');
+          $('#downloadURL').focus();
+        });
+        detail.append(offline);
       }
       row.append(detail); tbody.append(row);
     }

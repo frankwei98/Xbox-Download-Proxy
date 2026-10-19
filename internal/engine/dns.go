@@ -212,7 +212,7 @@ func (r *Runtime) answerDNS(b []byte, client string, tcp bool) []byte {
 				return reply(b, q, net.ParseIP(ip), 0)
 			}
 		}
-		if q.typ == 28 && r.cfg.SuppressAAAA && domain.GroupFor(q.name) != "" {
+		if q.typ == 28 && (r.cfg.SuppressAAAA || (r.cfg.OfflineEnabled && domain.LocalDeliveryHost(q.name))) && domain.GroupFor(q.name) != "" {
 			r.log("DNS", client, q.name, "AAAA 空答复（下载域名 IPv4 优选）", "")
 			return reply(b, q, nil, 0)
 		}

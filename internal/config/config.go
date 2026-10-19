@@ -26,19 +26,20 @@ type Test struct {
 	Concurrency    int   `json:"concurrency"`
 }
 type Config struct {
-	SchemaVersion int              `json:"schemaVersion"`
-	LANIP         string           `json:"lanIP"`
-	DNSListen     string           `json:"dnsListen"`
-	HTTPListen    string           `json:"httpListen"`
-	TLSListen     string           `json:"tlsListen"`
-	UpstreamDNS   string           `json:"upstreamDNS"`
-	WebListen     string           `json:"webListen"`
-	ShowLinks     bool             `json:"showLinks"`
-	RedirectToCN  bool             `json:"redirectToCN"`
-	SuppressAAAA  bool             `json:"suppressAAAA"`
-	AutoStart     bool             `json:"autoStart"`
-	Groups        map[string]Group `json:"groups"`
-	Test          Test             `json:"test"`
+	SchemaVersion  int              `json:"schemaVersion"`
+	LANIP          string           `json:"lanIP"`
+	DNSListen      string           `json:"dnsListen"`
+	HTTPListen     string           `json:"httpListen"`
+	TLSListen      string           `json:"tlsListen"`
+	UpstreamDNS    string           `json:"upstreamDNS"`
+	WebListen      string           `json:"webListen"`
+	ShowLinks      bool             `json:"showLinks"`
+	OfflineEnabled bool             `json:"offlineEnabled"`
+	RedirectToCN   bool             `json:"redirectToCN"`
+	SuppressAAAA   bool             `json:"suppressAAAA"`
+	AutoStart      bool             `json:"autoStart"`
+	Groups         map[string]Group `json:"groups"`
+	Test           Test             `json:"test"`
 }
 
 func Default() Config {
@@ -47,7 +48,7 @@ func Default() Config {
 		Groups: map[string]Group{
 			"global": {SourceURL: base + "Akamai.txt", TestURL: "http://assets1.xboxlive.com/Z/routing/extraextralarge.txt"},
 			"cn1":    {SourceURL: base + "XboxCn1.txt", TestURL: "http://assets1.xboxlive.cn/Z/routing/extraextralarge.txt"},
-			"cn2":    {SourceURL: base + "XboxCn2.txt"},
+			"cn2":    {SourceURL: base + "XboxCn2.txt", TestURL: "http://assets2.xboxlive.cn/Z/routing/extraextralarge.txt"},
 			"store":  {SourceURL: base + "XboxApp.txt"},
 		}, Test: Test{TimeoutSeconds: 5, MaxBytes: 10 * 1024 * 1024, Concurrency: 2}}
 }
@@ -76,6 +77,9 @@ func PublicIPv4(s string) bool {
 func Validate(c Config) error {
 	if c.SchemaVersion != 1 {
 		return errors.New("unsupported schemaVersion (expected 1)")
+	}
+	if c.OfflineEnabled && c.TLSListen == "" {
+		return errors.New("offline delivery requires tlsListen to preserve HTTPS forwarding for Xbox domains routed to this server")
 	}
 	ip := net.ParseIP(c.LANIP)
 	if ip == nil || ip.To4() == nil || ip.IsUnspecified() || ip.IsMulticast() {
@@ -162,7 +166,14 @@ func Load(dir string) (Config, error) {
 	if e = json.Unmarshal(b, &c); e != nil {
 		return c, fmt.Errorf("config.json: %w", e)
 	}
-	return c, Validate(c)
+	if err := Validate(c); err != nil {
+		return c, err
+	}
+	if cn2, ok := c.Groups["cn2"]; ok && cn2.TestURL == "" {
+		cn2.TestURL = "http://assets2.xboxlive.cn/Z/routing/extraextralarge.txt"
+		c.Groups["cn2"] = cn2
+	}
+	return c, nil
 }
 func Save(dir string, c Config) error {
 	if e := Validate(c); e != nil {
