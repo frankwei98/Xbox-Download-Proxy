@@ -142,6 +142,13 @@ make vet    # go vet
 make dist   # Linux/macOS amd64/arm64 交叉构建到 dist/
 ```
 
+推送符合 `v主版本.次版本.修订版本` 格式的 tag（例如 `v0.1.0`）会触发 GitHub Actions，为 Linux 和 macOS 分别构建 amd64、arm64 版本。每个目标会生成 `xdp-<tag>-<系统>-<架构>.tar.gz` 压缩包及对应的 `.sha256` 校验文件；arm64 也称 aarch64。可在仓库的 Actions 页面打开对应构建并下载各目标的 artifact。
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
+```
+
 ## 手工验收
 
 从 [手工验收清单](docs/manual-test.md) 开始。该清单区分本机检查、同网段客户端检查和 Xbox/Store 实机检查；本仓库目前尚未报告实机验收完成。
