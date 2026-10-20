@@ -1,217 +1,193 @@
 # Xbox 下载优选服务
 
-这是一个面向家庭局域网的 Xbox 与 Microsoft Store 下载网络优选服务。服务端运行在 Linux 或 macOS 主机（包括 NAS）上；Xbox、Windows Xbox App 和 Microsoft Store 是局域网内的下载客户端。项目独立实现参考项目的 DNS 选路和 HTTP 重定向行为，本仓库没有内置其程序代码、图片或 IP 表副本。
+在家里的 NAS 或电脑上运行，帮 Xbox、Windows Xbox App 和 Microsoft Store 选择下载节点。你可以在网页上测速、比较节点，再让下载设备使用选中的节点。
 
-项目为 MVP，尚未完成 Xbox 或 Microsoft Store 实机验收。节点测速仅描述测试资源的表现，不保证某个游戏或商店资源实际下载速度，也不承诺一定提速。
+**项目目前处于 MVP 阶段，尚未完成 Xbox / Microsoft Store 实机验收，不保证一定提速。** 测速结果只代表测试文件在当时网络下的表现，实际游戏下载速度需要自行验证。
 
-## 工作方式
+第一次使用，按下面的「安装 → 打开管理页面 → 选择节点 → 设置 DNS」完成即可。离线下载是可选功能，可以以后再了解。
 
-DNS 可把受控下载域名解析到用户为域名组指定的 CDN IP。需要展示或改写的 Xbox 下载请求可以先经过本服务的 HTTP 重定向入口，之后大文件由下载客户端直接连接 CDN。Microsoft Store 使用独立域名组。HTTPS 入口只做 SNI 原样转发，不安装 CA、不解密 TLS，也不改写 HTTPS 域名。
+## 开始前：需要准备什么
 
-服务会尝试从配置中指定的公开在线文本源读取候选 IP；默认引用 [参考项目的在线 IP 列表](https://github.com/skydevil88/XboxDownload/tree/master/IP)，本仓库没有附带其列表副本。下载成功后可用缓存，更新失败会保留旧缓存；无缓存时回退到当前域名的 DNS 结果并显示警告。可以在 WebUI 配置自己的 HTTPS 文本源，也可以导入 IP 列表。首次使用没有缓存时需要联网；候选源的可用性和更新由其提供方决定。项目不调用参考项目作者的商店 API，不做遥测，也不上传下载链接或测速数据。
+你需要两类设备，并让它们连接同一个家庭局域网：
 
-候选节点测速需要由服务端访问测试 URL，并按用户提供的 IP 发起测试。`cn1` 默认使用 `http://assets1.xboxlive.cn/Z/routing/extraextralarge.txt`，`cn2` 默认使用 `http://assets2.xboxlive.cn/Z/routing/extraextralarge.txt`，`global` 默认使用 `http://assets1.xboxlive.com/Z/routing/extraextralarge.txt`。`store` 没有默认测试 URL，需要在配置中填写真实可下载的测试资源 URL；未填写时会明确提示无法测速。Store 也可以不测速，直接指定 IP。
-
-吞吐测试结果只代表该测试 URL、该 IP 和当时网络条件下的测试表现，不能作为游戏实时下载速度或实际 CDN 命中情况的保证。
-
-## 离线下载
-
-离线下载与 Xbox 本地回传是可选功能，默认关闭。只需 302 到 Xbox 中国 CDN 的用户可保持关闭，不会打开下载库或启动下载队列。安装引导会询问，也可在 WebUI 服务设置启用，或执行 `xdp init --data-dir ./data --offline=true`。
-
-启用后，把监听日志中的 Xbox HTTP 链接加入离线下载，暂停 Xbox 下载并等待 NAS 下载完成，再启动加速服务、让 Xbox 继续下载。命中完整资源时直接由 NAS 返回文件，支持 HEAD 和 Range；未命中继续 CDN 路径。回传模式会把受支持 Xbox 域名指向 NAS，最终 CDN 域名的未命中请求由 NAS 转发，避免循环。关闭该功能后恢复原有 DNS/302 路由，已有任务和文件保留。
-
-后台任务也可下载其他公网 HTTP(S) URL，供 WebUI/CLI 取回；首版向 Xbox 回传仅支持 Xbox HTTP 资源，HTTPS 仍使用原站证书透传，不解密或本地回传。它不登录账号、抓取商店目录或安装内容。
-
-最多两个任务同时下载，其余任务排队。任务支持暂停、继续、取消和删除；任务元数据持久化，服务重启后原先运行/排队的任务会暂停，等待用户恢复。支持 HTTP Range 与 If-Range 续传；源站不支持 Range、缺少可验证标识或返回完整的新资源时，从头下载。下载时保留 256 MiB 空间预算；已知大小会预先检查，未知大小会在下载中持续检查，空间不足时暂停。容量显示包含下载目录所在文件系统的总量、已用、可用空间和本工具文件大小总计。
-
-默认保存目录是 `data/downloads`，原生部署可通过 `serve --download-dir /path/to/large-disk` 将文件放到 NAS 大容量磁盘。Signed URL 过期后不能续签，请获取新 URL 并创建新任务。WebUI 优先使用浏览器流式保存能力；浏览器不支持时会退回 Blob 下载，并限制在 256 MiB，较大文件请直接从 NAS 目录访问或用 CLI 流式取回。完整行为及命令见 [离线下载说明](docs/offline-downloads.md)。
-
-## 端口与网络要求
-
-默认监听端口如下：
-
-| 端口 | 协议 | 用途 |
+| 设备 | 用来做什么 | 支持范围 |
 | --- | --- | --- |
-| 53 | UDP、TCP | DNS |
-| 80 | TCP | Xbox HTTP 重定向、可选的本地回传 |
-| 443 | TCP | 可选的 HTTPS SNI 转发 |
-| 8080 | TCP | Web UI 与管理 API |
+| 服务端：一台保持开机的 NAS 或电脑 | 运行本项目，提供网页管理和下载选路 | Linux amd64 / arm64、macOS arm64 |
+| 下载客户端：Xbox 或 Windows 电脑 | 实际下载游戏或商店内容 | Xbox、Windows Xbox App、Microsoft Store |
 
-NAS 上已有 DNS、Web 或其他服务占用端口时，需要自行腾出标准端口，或给容器分配独立网络 IP，并将监听地址绑定到该 IP。MVP 不集成 AdGuard Home、Pi-hole 等现有 DNS 服务。**Xbox 和 Windows 普通 DNS 设置不能指定自定义端口；改成高端口仅适合本机测试，不能直接作为客户端部署方案。** HTTP 重定向同样需要客户端能访问标准 80 端口；HTTPS 转发需要标准 443 端口。服务不会杀死占用端口的进程，也不会更改宿主机 DNS、hosts 或防火墙。客户端应将 DNS 设置为运行服务的 LAN IP；停止服务后，手动将客户端 DNS 恢复为自动获取。辅助 DNS 会绕过本服务的节点选择，不建议与本服务地址混填。
+Windows 可以作为下载客户端，目前不支持作为服务端。本项目面向家庭局域网，不提供公网 VPS 部署方案。
 
-IPv6 对受控域名可能返回空 AAAA 答案，以避免绕过 IPv4 节点选择。客户端已有的 IPv6 DNS 缓存或加密 DNS 仍可能绕过服务，请按你的网络环境验证。主机休眠会让服务暂时不可用；macOS 可在服务运行期间用 `caffeinate` 防止睡眠。
+安装前，请确认：
 
-## 引导安装（推荐）
+- **知道服务端的局域网 IP。** 例如 NAS 的地址是 `192.168.1.10`，后面的示例就使用这个地址。请替换成你自己的地址，不要照抄；建议在路由器中为服务端固定这个地址。
+- **服务端有可用的标准端口。** DNS 需要 UDP/TCP `53`，HTTP 需要 TCP `80`，启用 HTTPS 转发时需要 TCP `443`；网页管理默认使用 TCP `8080`。如果 NAS 已运行 AdGuard Home、Pi-hole 或网站，先查看[端口冲突处理](docs/deployment.md#端口与网络要求)。
+- **选好安装方式。** 下表中的条件要在服务端满足。
 
-在项目根目录运行：
+| 安装方式 | 适合谁 | 需要提前准备 |
+| --- | --- | --- |
+| 本机安装（`native`） | 希望直接运行一个程序；macOS 用户也建议选此项 | Go 1.24+，或一个与系统、CPU 匹配的预编译二进制 |
+| Docker Compose（`compose`） | 已在 Linux NAS 上使用 Docker | Docker 和 `docker compose` 插件；镜像会在本机从源码构建 |
+
+`amd64` 也叫 `x86_64`，通常是 Intel / AMD 的 64 位机器；`arm64` 也叫 `aarch64`，包括 Apple Silicon Mac 和部分 ARM NAS。可在服务端运行 `uname -m` 查看架构。
+
+原生安装没有 Go 时，可从[项目 Releases](https://github.com/frankwei98/Xbox-Download-Proxy/releases)中选择已有版本的对应压缩包，解压后用 `--binary` 指定其中的 `xdp`，详见[部署参考](docs/deployment.md)。安装器不会自动下载发布版二进制。128/256 MiB 的小内存容器优先使用预编译文件，避免在容器内编译。
+
+## 第一步：安装到服务端
+
+在 **NAS 或服务端电脑的终端** 中运行。若你从另一台电脑通过 SSH 登录 NAS，也是在 NAS 的终端里执行。
+
+### 一行命令安装（推荐）
+
+服务端需要有 `curl` 和 `tar`：
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/frankwei98/Xbox-Download-Proxy/main/install.sh | sh
+```
+
+这条命令会下载 `main` 分支的完整源码并启动交互引导。按提示填写：
+
+| 引导项 | 第一次使用怎么选 |
+| --- | --- |
+| 安装方式 | 按前面的条件选择 `native` 或 `compose` |
+| 安装目录 | 没有特殊需求就按回车，默认 `~/.local/share/xdp` |
+| 服务端 LAN IPv4 | 填 NAS 或服务端电脑的局域网 IP，例如 `192.168.1.10` |
+| 管理端口 | 没有冲突就保留 `8080` |
+| 离线下载与 Xbox 本地回传 | 第一次使用建议选否，先验证基本下载选路 |
+| 是否立即启动（Compose 模式） | 选是可直接启动管理页面 |
+
+安装结束后，终端会显示 **管理页面地址、管理 token 和启动命令**。token 就是登录管理页面的凭证，请妥善保存。
+
+默认安装目录保存程序和数据；下载的源码保留在 `~/.local/share/xdp-sources/`。Compose 后续重建镜像仍需要这些源码，请保留。
+
+### 已经下载了仓库？
+
+在项目根目录运行下面的命令，即可进入相同的安装引导：
 
 ```sh
 sh ./setup.sh
 ```
 
-脚本引导选择本机安装或 Docker Compose、安装目录、服务端 LAN IPv4、管理端口，以及是否启用离线下载和 Xbox 本地回传。该功能默认关闭；已有配置在此项留空时保持原值。默认安装到 `~/.local/share/xdp`，完成后直接显示 **WebUI 地址、管理 token 和启动命令**。已有配置与 token 会保留；更新生成的二进制、启动脚本或 Compose 文件时会先确认。脚本不会修改系统 DNS 或自动提权。
+指定安装参数、使用预编译文件、安装依赖或手动部署，请查看[部署与安装参考](docs/deployment.md)。脚本使用 `/bin/sh`，无需安装 Bash；不会自动提权或修改系统 DNS、防火墙。
 
-`setup.sh` 和生成的 `start.sh` 使用 POSIX `/bin/sh`，无需安装 Bash。Linux 原生模式有 Go 1.24 或更新版本时会从当前源码以 `CGO_ENABLED=0` 编译静态二进制；没有 Go 时使用项目根目录已有的 `xdp`。也可用 `--binary PATH` 指定预编译的 Linux amd64/arm64 二进制；指定后始终直接使用该文件，不会因本机安装了 Go 而重新编译。128/256 MiB 容器建议提供预编译二进制，避免编译时内存不足。
+## 第二步：启动并打开管理页面
 
-默认不会安装系统软件。Linux 原生安装可显式加 `--install-deps` 安装运行依赖；脚本不会自动提权，因此必须由 root 执行。Alpine 使用 `apk add --no-cache ca-certificates`；只有需要编译且没有 Go 时才同时安装 `go`。Debian 使用 `apt-get update` 和 `apt-get install -y --no-install-recommends ca-certificates`；只有需要编译且没有 Go 时才同时安装 `golang-go`。部分 Debian 仓库的 Go 版本低于 1.24，脚本会说明版本不满足；此时可改用 `--binary PATH`，或自行提供 Go 1.24 及以上版本。示例：
+**安装完成不等于已经启动。** 请执行安装结束时显示的 `Start Web/API with:` 命令。
 
-```sh
-sh ./setup.sh --mode native --install-dir /opt/xdp --install-deps --lan-ip 192.168.1.10
-sh ./setup.sh --mode native --install-dir /opt/xdp --binary ./dist/xdp-linux-amd64 --lan-ip 192.168.1.10
-```
-
-Linux 原生安装会生成 `xdp.service`、`xdp.openrc` 和 `install-service.sh`，但只生成文件，不写入 `/etc`，也不注册或启用服务。需要开机启动时，以 root 运行 `/opt/xdp/install-service.sh --manager auto --start`；也可指定 `--manager systemd` 或 `--manager openrc`，并使用 `--yes` 跳过覆盖确认。非 root 用户可通过 `sudo`、`doas` 或 `su` 执行。`--start` 会立即启动 Web/API；新安装的 DNS/302 加速服务仍默认关闭，需登录 WebUI 后手动启用，已有安装沿用 `autoStart` 设置。systemd 日志可用 `journalctl -u xdp` 查看，OpenRC 日志位于安装目录的 `logs/xdp.log`，日志目录和文件权限分别为 0700、0600。
-
-没有实际 init 的最小容器应使用 `start.sh` 在前台运行，容器里存在 `systemctl` 命令不代表 systemd 可用。推荐在 LXC 中使用独立 LAN 固定 IP，并在网络/防火墙放行 UDP/TCP 53、TCP 80、443 和 8080；无需 privileged、nesting、TUN 或 NET_ADMIN，只需允许绑定低端口。项目不会自动修改宿主机防火墙。日常运行建议从 128 MiB 内存起步，256 MiB 更宽裕；这是运行预算，编译所需内存更高。
-
-生成的 `start.sh` 用于前台运行 Web/API；如启用 53/80/443 时提示权限不足，先用 Ctrl+C 停止前台进程，再以有低端口绑定权限的方式重启，之后在 WebUI 启用加速服务。Compose 模式需要 Docker 与 `docker compose`，使用本地 Dockerfile 构建，主要面向 Linux NAS；生成文件引用当前仓库的绝对路径，后续重建镜像需要保留仓库。更新已有安装的文件仍需 `--yes` 或交互确认。
-
-也可直接传入参数：
+如果使用默认安装目录，命令如下，按你的安装方式选择一条：
 
 ```sh
-sh ./setup.sh --mode native --lan-ip 192.168.1.10
-sh ./setup.sh --mode compose --lan-ip 192.168.1.10 --install-dir ./deployment
-# 非交互启用或关闭离线下载与 Xbox 本地回传
-sh ./setup.sh --mode compose --lan-ip 192.168.1.10 --offline yes
-sh ./setup.sh --mode native --lan-ip 192.168.1.10 --offline no
-# Compose 初始化后立即启动 Web/API（新安装的加速服务仍保持关闭）
-sh ./setup.sh --mode compose --lan-ip 192.168.1.10 --install-dir ./deployment --yes --start
-sh ./setup.sh --help
+# 本机安装：在前台运行，保持终端打开
+sh "$HOME/.local/share/xdp/start.sh"
+
+# Docker Compose：在后台运行；安装时已选择立即启动的可跳过
+docker compose -f "$HOME/.local/share/xdp/compose.yaml" up -d
 ```
 
-新安装默认只运行管理界面；已有安装沿用 `autoStart` 设置。登录后建议按以下顺序完成配置：
+在同一局域网的电脑或手机浏览器中打开终端显示的地址，例如：
 
-1. 在“测速”选择下载域名组、所在省份和运营商，点击“按地区自动测速”。默认从匹配项中抽样最多 16 个节点，可调整至 8–128 个；搜索框也会参与筛选。没有地区匹配时会提示调整条件，未标注地区的节点可手选。
-2. 比较结果，点击“应用最快节点”或手动应用其他节点。只推荐成功且有有效吞吐的结果；应用节点会停止加速服务。
-3. 检查网络设置，点击醒目状态提示中的“启动加速服务”。确认显示“加速服务已开启”后，再将 Xbox / Windows 的 DNS 设置为服务端 LAN IP。
+```text
+http://192.168.1.10:8080
+```
 
-搜索支持空格分隔的多个关键词，例如 `广东 联通` 可以匹配 `广东深圳 联通`，关键词顺序不限。省份和运营商信息来自候选源标注，不使用定位权限，也不保证同省节点一定最快。自动测速会显示流量预算，不会自动应用节点或启用 DNS/HTTP(S)。Microsoft Store 需先填写真实下载 URL。
+输入安装时显示的管理 token 登录。使用自定义 IP 或管理端口时，以终端显示的实际地址为准。
 
-## 手动原生安装
+**管理页面和加速服务是分开启动的。** 新安装默认只开启管理页面，DNS、HTTP 和 HTTPS 加速服务仍关闭，这是正常状态。先选节点，再开启加速服务；已有安装会保留原来的自动启动设置。
 
-要求 Go 1.24 或更新版本（开发验证使用 Go 1.26.1）。本项目使用 Go 标准库构建，静态 Web 文件嵌入可执行文件；支持 Linux amd64/arm64 和 macOS arm64。
+## 第三步：测速并选择节点
+
+1. 在管理页面进入「测速」，选择下载域名组、所在省份和运营商。Microsoft Store 使用独立的 `store` 组。
+2. 点击「按地区自动测速」，等待结果。没有匹配节点时，调整筛选条件或手动选择节点。
+3. 点击「应用最快节点」，或手动应用一个测速成功的节点。
+4. 检查网络设置，再点击「启动加速服务」。确认页面显示 **「加速服务已开启」**。
+
+应用节点会停止加速服务，因此每次换节点后都要再次启动。自动测速只负责比较节点，不会自动应用或启动服务。
+
+搜索框可输入 `广东 联通` 这样的多个关键词。同省节点不一定最快，最好比较实测结果。测速会消耗服务端流量，开始前留意页面显示的流量预算。
+
+**Microsoft Store 用户：** `store` 组没有默认测试文件，需要先在配置中填写真实可下载的测试资源 URL，才能测速；也可以直接指定 IP。
+
+如果本机安装在启动加速服务时提示权限不足，先用 `Ctrl+C` 停止前台程序，再用有低端口绑定权限的方式重启。例如，使用默认目录且系统有 `sudo` 时：
 
 ```sh
-# 在项目根目录执行
-go build -o xdp ./cmd/xdp
-./xdp init --data-dir ./data
+sudo sh "$HOME/.local/share/xdp/start.sh"
 ```
 
-初始化会生成 `data/config.json` 和随机管理令牌 `data/token`（权限为仅当前用户可读写），并直接在终端显示令牌。请妥善保管该令牌。启动 Web UI/API：
+重新进入管理页面，再启动加速服务。Linux 开机启动配置见[部署参考](docs/deployment.md)。
+
+## 第四步：让 Xbox 或 Windows 使用它
+
+确认「加速服务已开启」后，再修改 **下载客户端** 的 DNS：
+
+1. 打开 Xbox 或 Windows 的网络设置，找到当前连接的 DNS 设置。
+2. 改为手动，将 DNS 服务器填成 **服务端的局域网 IP**，例如 `192.168.1.10`。这里填 IP，不填网页地址或 `:8080`。
+3. 辅助 DNS 不要混填其他公共 DNS，否则部分请求可能绕过本服务。具体可填写项以设备的设置界面为准。
+4. 开始或继续下载，在管理页面查看请求记录，并观察设备上的实际下载速度。
+
+普通 Xbox / Windows DNS 设置不能填写自定义端口。将服务端 DNS 改成高端口只适合本机测试，不能直接供这些客户端使用。
+
+服务端需要保持开机和联网。**准备停用本项目时，先把下载客户端的 DNS 恢复为自动获取，再停止服务**，避免设备继续向已关闭的服务查询 DNS。
+
+## 日常使用与常见问题
+
+### 如何停止？
+
+先恢复下载客户端的自动 DNS。本机前台运行时按 `Ctrl+C`；Compose 默认目录安装可执行：
 
 ```sh
-./xdp serve --data-dir ./data --lan-ip 192.168.1.10
+docker compose -f "$HOME/.local/share/xdp/compose.yaml" down
 ```
 
-首次运行可在终端查看服务显示的令牌，然后访问 `http://192.168.1.10:8080`。Web UI 将令牌保存在当前浏览器标签页的 `sessionStorage`，管理 API 使用 `Authorization: Bearer <token>`。Web/API 默认启动时不打开 DNS、HTTP、HTTPS 服务；用户在 Web UI 启动服务，或在启动时传入 `--start`：
+管理页面里的「停止加速服务」只停止 DNS / HTTP / HTTPS 功能，管理页面仍可访问；已启用的离线下载任务也会继续。要停止整个程序，请停止进程或容器。
 
-```sh
-sudo ./xdp serve --data-dir ./data --lan-ip 192.168.1.10 --start
-# 或在 Web/API 已运行后：
-./xdp start --data-dir ./data --url http://127.0.0.1:8080 --token '<token>'
-```
+### 网页打不开？
 
-Linux/macOS 绑定 53、80、443 等低端口通常需要相应权限。只在明确需要监听这些端口时提升权限；也可以将监听端口配置为可用的高端口。`serve` 可覆盖监听地址与上游 DNS，例如：
+确认已执行启动命令、浏览器与服务端在同一局域网，并使用正确的 IP 和管理端口。检查终端是否报错，以及主机防火墙是否允许访问管理端口。本项目不会自动修改防火墙。
 
-```sh
-sudo ./xdp serve --data-dir ./data --lan-ip 192.168.1.10 \
-  --web :8080 --dns :53 --http :80 --tls :443 \
-  --upstream 114.114.114.114:53 --start
-```
+### 提示端口被占用？
 
-`--tls ""` 可关闭 HTTPS SNI 转发。`xdp init` 只需执行一次。配置文件会以原子方式写入。服务启动失败时会关闭已创建的监听器，不保留部分启动状态。
+检查是否有其他 DNS、Web 服务占用了 `53`、`80` 或 `443`。需要腾出标准端口，或给容器配置独立的局域网 IP 并绑定监听地址；项目不会自动结束其他进程。详见[端口与网络要求](docs/deployment.md#端口与网络要求)。
 
-## Docker Compose（Linux NAS）
+### 能测速，但下载速度没有提升？
 
-Linux 上可使用 host 网络，让服务直接绑定 NAS 的 LAN 接口。Dockerfile 在本地构建镜像，没有假定存在公开镜像仓库。
+测试文件和实际游戏资源可能使用不同的 CDN 路径，结果不保证一致。先确认已应用节点、重新启动加速服务，并正确设置客户端 DNS。客户端的旧 DNS 缓存、IPv6 DNS 或加密 DNS 也可能让请求绕过服务。
 
-```sh
-LAN_IP=192.168.1.10 docker compose build
-LAN_IP=192.168.1.10 docker compose run --rm xdp init --data-dir /data
-LAN_IP=192.168.1.10 docker compose up -d
-docker compose logs -f xdp
-```
+### 安装时提示缺少 Go 或证书？
 
-编辑 `LAN_IP` 为 NAS 的 LAN 地址。Compose 将宿主网络端口交给容器使用，不配置端口映射；确保所需端口已空闲。容器只添加绑定低端口所需的 `NET_BIND_SERVICE` capability，不使用 `privileged`。数据目录挂载到 `/data`。Docker host 网络主要面向 Linux NAS；macOS 上 Docker Desktop 的 host 网络行为不同，建议原生运行。
+本机模式需要 Go 1.24+ 或通过 `--binary PATH` 提供预编译文件。Alpine / Debian 可显式使用 `--install-deps` 安装依赖，需由 root 执行；部分 Debian 仓库中的 Go 版本可能不满足要求。具体命令见[部署参考](docs/deployment.md)。
 
-默认离线下载目录位于 `./data/downloads`。如需使用 NAS 的大容量卷，可设置 `DOWNLOAD_PATH=/volume1/xdp-downloads`；Compose 会挂载到 `/downloads`，服务通过 `--download-dir /downloads` 使用它。
+### 如何更新？
 
-Compose 服务启动 Web/API 后可通过 Web UI 启动 DNS/HTTP(S)；要让容器启动时一并开启这些服务，可在 `compose.yaml` 的命令中增加 `--start`。
+重新运行安装引导，填写原来的安装目录，并在提示时确认覆盖生成文件。已有配置和 token 会保留；使用预编译文件的用户需提供新的二进制。更新完成后重启程序或 Compose 容器，使新版本生效。更新前建议备份安装目录中的 `data/`。
 
-## CLI 操作
+### 数据和登录凭证在哪里？
 
-管理命令可通过 `--data-dir ./data`、`--url http://127.0.0.1:8080` 和 `--token <token>` 指定本地数据目录、服务 URL 与管理令牌。令牌也可以放在 `data/token` 中供本机命令读取。
+默认安装的数据位于 `~/.local/share/xdp/data/`，其中 `config.json` 保存配置，`token` 保存管理凭证。管理页面仅供可信家庭局域网使用，不要将其映射到公网；HTTP 管理连接没有加密。
 
-```sh
-./xdp status --data-dir ./data
-./xdp config --data-dir ./data                         # 查看配置
-./xdp config --data-dir ./data --file ./my-config.json # 校验并更新配置
-./xdp sources --data-dir ./data --group cn1 --refresh
-./xdp import --data-dir ./data --group cn1 --file ./ips.txt
-./xdp speedtest --data-dir ./data --group cn1 --ips '<从列表选出的IP>,<另一个IP>' --wait
-./xdp apply --data-dir ./data --group cn1 --ip '<选择的IP>'
-./xdp logs --data-dir ./data --after 0
-./xdp download --data-dir ./data --source 'https://example.com/file.zip'
-./xdp downloads --data-dir ./data
-./xdp download-save --data-dir ./data --id '<任务ID>' --output ./file.zip
-./xdp doctor --data-dir ./data
-./xdp stop --data-dir ./data
-```
+## 可选：先下载到 NAS，再回传给 Xbox
 
-`speedtest` 可加 `--test-url URL` 覆盖该次测试资源。`apply` 保存指定 IP 并停止下载服务；应用后需再次执行 `start`。`doctor` 用于离线检查配置与监听端口，不会更改系统设置。
+离线下载默认关闭。基本选路工作正常后，可以在管理页面的服务设置中启用「离线下载与 Xbox 本地回传」。
 
-文本导入格式为每行一个公网 IPv4，后面可带地区/运营商说明。每轮最多 128 个候选，默认每节点最多 5 秒、10 MiB，并发 2；时间预算到达时，已有足够数据的样本按实际接收字节计算速度。首包延迟包含连接和取得响应头的时间；并发测速会共享同一条带宽，最终候选可用并发 1 复测。结果中的 `mbps` 是十进制 Mbit/s，WebUI 换算为 MiB/s。
+大致流程是：捕获 Xbox HTTP 下载链接 → 暂停 Xbox 下载 → 将链接加入 NAS 离线任务并等待完成 → 确认加速服务已开启 → 让 Xbox 继续下载。一个游戏可能需要多个资源文件。
 
-例如在不占用系统低端口的情况下做本机检查：
+目前只有受支持的 Xbox **HTTP** 资源可以本地回传；HTTPS 保持加密透传，Microsoft Store 和普通下载链接可下载后取回文件。服务不会登录账号、抓取游戏目录或安装游戏。
 
-```sh
-./xdp serve --data-dir ./test-data --lan-ip 127.0.0.1 \
-  --web 127.0.0.1:18088 --dns 127.0.0.1:11053 \
-  --http 127.0.0.1:18089 --tls '' --start
-# 另开终端：
-dig @127.0.0.1 -p 11053 assets1.xboxlive.com A
-curl -I -H 'Host: assets1.xboxlive.com' \
-  'http://127.0.0.1:18089/example/file?example=value'
-```
+任务续传、存储空间、文件取回和完整操作步骤见[离线下载说明](docs/offline-downloads.md)。
 
-应返回本机 A 记录与保留路径/查询参数的 HTTP 302。这验证协议行为，不代表实际游戏资源存在或下载已提速。
+## 它是怎样工作的？
 
-API 请求使用 Bearer token。例如读取状态：
+可以把它理解为局域网里的“下载指路器”：客户端向它查询下载域名，它按你选择的节点返回地址；部分 Xbox HTTP 请求会经过重定向入口，之后大文件由客户端直接向 CDN 下载。启用离线回传后，符合条件的文件可由 NAS 提供。
 
-```sh
-curl -H "Authorization: Bearer $XDP_TOKEN" \
-  http://127.0.0.1:8080/api/status
-```
+HTTPS 只做 SNI 原样转发，保留原站证书，不安装 CA，也不解密内容。项目不做遥测，不上传下载链接或测速数据。
 
-## 构建与检查
+候选节点默认从[参考项目的公开 IP 列表](https://github.com/skydevil88/XboxDownload/tree/master/IP)读取，也可配置自己的 HTTPS 文本源或导入 IP 列表。本项目独立实现相关行为，没有内置参考项目的程序代码、图片或 IP 表副本。
 
-```sh
-make build  # 本机可执行文件 ./xdp
-make test   # Go 测试
-make test-race # Go 竞态检查，禁用测试缓存
-make test-cover # 竞态检查及语句覆盖率报告，写入 /tmp/xdp-coverage.out
-make test-ui # 节点筛选 / 推荐逻辑测试（需要 Node.js 18+）
-make test-setup # 安装脚本 mock 测试（无需真实安装或 Docker）
-make vet    # go vet
-make check  # 竞态测试、前端逻辑、安装脚本、go vet 与 JavaScript 语法检查
-make dist   # Linux amd64/arm64、macOS arm64 交叉构建到 dist/
-```
+## 更多文档
 
-Pull request、推送到 `main` 和符合 `v主版本.次版本.修订版本` 格式的版本 tag（例如 `v0.1.0`）会在 GitHub Actions 中运行检查，避免同一分支提交因 push 和 pull request 事件重复运行。检查包括 Go 竞态与覆盖率测试、`go vet`、前端逻辑和安装脚本 mock 测试；macOS 测试仅覆盖 arm64，Linux 测试与安装验证仅覆盖 Alpine 3.23 arm64 和 Debian 13 amd64。测试与三个目标的构建并行执行，同一 PR 的新提交会取消旧检查。版本 tag 会打包 Linux amd64、Linux arm64 和 macOS arm64 三个发布目标；全部测试、安装验证和构建成功后，Actions 会自动创建或更新同名 GitHub Release，并附上三个 `xdp-<tag>-<系统>-<架构>.tar.gz` 压缩包及对应的 `.sha256` 校验文件。arm64 也称 aarch64。tag 构建仍会将各目标作为 artifact 保留，可在仓库的 Actions 页面下载。重新运行同一 tag 的工作流会更新该 Release 中的对应资产。
-
-```sh
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-## 手工验收
-
-从 [手工验收清单](docs/manual-test.md) 开始。该清单区分本机检查、同网段客户端检查和 Xbox/Store 实机检查；本仓库目前尚未报告实机验收完成。
-
-已执行的自动化检查及运行限制见 [MVP 验证记录](docs/validation.md)。
-
-## 配置和安全
-
-配置由 `data/config.json` 保存，管理令牌由 `data/token` 单独保存。请限制数据目录权限，不要公开暴露管理 Web/API。HTTP 管理入口本身在局域网中未加密，应仅在可信网络使用。
-
-项目只面向受控家庭 LAN 使用，不提供公网 VPS 或 Windows 服务端支持。停止服务后，下载客户端应恢复使用自动 DNS。遇到端口冲突时，先检查实际监听者并调整网络或端口；本服务不会代替用户修改宿主机网络设置。
+| 你想做什么 | 阅读文档 |
+| --- | --- |
+| 指定安装参数、配置开机启动、手动部署或处理端口 | [部署与安装参考](docs/deployment.md) |
+| 使用离线任务和 Xbox 本地回传 | [离线下载说明](docs/offline-downloads.md) |
+| 了解节点来源、测速细节、命令行和 API 示例 | [工作原理与命令行参考](docs/usage-reference.md) |
+| 构建项目、运行测试、发布版本 | [开发与验证](docs/development.md) |
+| 验证部署和实际设备下载行为 | [手工验收清单](docs/manual-test.md) |
+| 查看已经执行的检查和当前限制 | [MVP 验证记录](docs/validation.md) |

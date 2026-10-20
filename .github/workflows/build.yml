@@ -134,7 +134,7 @@ jobs:
           go-version: '1.27.2'
           cache: false
       - name: Check shell scripts
-        run: shellcheck setup.sh scripts/setup_test.sh scripts/install-service.sh scripts/setup_smoke_test.sh
+        run: shellcheck install.sh setup.sh scripts/install_test.sh scripts/setup_test.sh scripts/install-service.sh scripts/setup_smoke_test.sh
       - name: Build static test binary
         run: CGO_ENABLED=0 go build -trimpath -o "$RUNNER_TEMP/xdp" ./cmd/xdp
       - name: Locate Go toolchain

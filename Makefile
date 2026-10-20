@@ -18,6 +18,7 @@ test-ui:
 
 test-setup:
 	sh scripts/setup_test.sh
+	sh scripts/install_test.sh
 
 build:
 	CGO_ENABLED=0 go build -trimpath -o xdp ./cmd/xdp
