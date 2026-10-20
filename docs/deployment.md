@@ -20,27 +20,27 @@ IPv6 对受控域名可能返回空 AAAA 答案，以避免绕过 IPv4 节点选
 
 ## 引导安装（推荐）
 
-在 Linux 主机上可从 GitHub 直接下载完整源码并启动安装引导（需要 `curl` 和 `tar`）：
+在支持的 Linux 主机或 Apple Silicon Mac 上可从 GitHub 下载安装脚本和源码并启动引导（需要 `curl`、`tar`，以及 `sha256sum` 或 `shasum` 用于校验发布版）：
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/frankwei98/Xbox-Download-Proxy/main/install.sh | sh
 ```
 
-安装器会将源码保留在 `~/.local/share/xdp-sources/`，供后续 Compose 重建使用。原生模式需要 Go 1.24 或更新版本，或通过 `--binary PATH` 提供预编译二进制；不会自动下载发布版二进制，也不会自动安装依赖，Linux 运行依赖需显式传入 `--install-deps`。可用 `sh -s --` 向脚本传参，例如：
+远程安装器会将源码保留在 `~/.local/share/xdp-sources/`，供 setup helper 和后续 Compose 构建使用。交互运行时会询问安装模式；无交互运行时默认选 `native`，此时必须通过 `--lan-ip` 提供服务端 LAN IPv4 地址。远程 `native` 模式会从 GitHub Releases 选择最新稳定版中与 Linux amd64/arm64 或 macOS arm64 匹配的压缩包，下载对应的 `.sha256` 文件，并用 `sha256sum` 或 `shasum` 校验。它不需要 Go，也不会在下载失败、没有匹配资产或校验失败时回退到源码构建。显式传入 `--binary PATH` 时直接使用指定文件，不自动下载。Compose 模式仍从保留的源码在本机构建镜像，需要 Docker 和 `docker compose`；它不下载发布版二进制。安装器不会自动安装 Linux 运行依赖，需时可显式传入 `--install-deps`，详见下文。可用 `sh -s --` 向脚本传参，例如：
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/frankwei98/Xbox-Download-Proxy/main/install.sh | sh -s -- --mode native --lan-ip 192.168.1.10
 ```
 
-也可在项目根目录运行本地安装脚本：
+已下载仓库后，也可在项目根目录运行本地安装脚本：
 
 ```sh
 sh ./setup.sh
 ```
 
-脚本引导选择本机安装或 Docker Compose、安装目录、服务端 LAN IPv4、管理端口，以及是否启用离线下载和 Xbox 本地回传。该功能默认关闭；已有配置在此项留空时保持原值。默认安装到 `~/.local/share/xdp`，完成后直接显示 **WebUI 地址、管理 token 和启动命令**。已有配置与 token 会保留；更新生成的二进制、启动脚本或 Compose 文件时会先确认。脚本不会修改系统 DNS 或自动提权。
+本地 `setup.sh` 引导选择本机安装或 Docker Compose、安装目录、服务端 LAN IPv4、管理端口，以及是否启用离线下载和 Xbox 本地回传。该功能默认关闭；已有配置在此项留空时保持原值。默认安装到 `~/.local/share/xdp`，完成后直接显示 **WebUI 地址、管理 token 和启动命令**。已有配置与 token 会保留；更新生成的二进制、启动脚本或 Compose 文件时会先确认。脚本不会修改系统 DNS 或自动提权。远程一行安装与本地 `setup.sh` 的 native 二进制获取方式不同：远程安装默认下载并校验发布版，本地脚本始终使用当前仓库源码或已有二进制。
 
-`setup.sh` 和生成的 `start.sh` 使用 POSIX `/bin/sh`，无需安装 Bash。Linux 原生模式有 Go 1.24 或更新版本时会从当前源码以 `CGO_ENABLED=0` 编译静态二进制；没有 Go 时使用项目根目录已有的 `xdp`。也可用 `--binary PATH` 指定预编译的 Linux amd64/arm64 二进制；指定后始终直接使用该文件，不会因本机安装了 Go 而重新编译。128/256 MiB 容器建议提供预编译二进制，避免编译时内存不足。
+`setup.sh` 和生成的 `start.sh` 使用 POSIX `/bin/sh`，无需安装 Bash。**本地 `sh ./setup.sh`** 的 Linux 原生模式有 Go 1.24 或更新版本时会从当前源码以 `CGO_ENABLED=0` 编译静态二进制；没有 Go 时使用项目根目录已有的 `xdp`。也可用 `--binary PATH` 指定预编译的 Linux amd64/arm64 二进制；指定后始终直接使用该文件，不会因本机安装了 Go 而重新编译。远程一行安装的 `native` 默认使用经 SHA256 校验的 GitHub Release 二进制，即使系统已安装 Go 也不会编译当前源码。128/256 MiB 容器建议使用远程发布版或提供预编译二进制，避免编译时内存不足。
 
 默认不会安装系统软件。Linux 原生安装可显式加 `--install-deps` 安装运行依赖；脚本不会自动提权，因此必须由 root 执行。Alpine 使用 `apk add --no-cache ca-certificates`；只有需要编译且没有 Go 时才同时安装 `go`。Debian 使用 `apt-get update` 和 `apt-get install -y --no-install-recommends ca-certificates`；只有需要编译且没有 Go 时才同时安装 `golang-go`。部分 Debian 仓库的 Go 版本低于 1.24，脚本会说明版本不满足；此时可改用 `--binary PATH`，或自行提供 Go 1.24 及以上版本。示例：
 
@@ -90,7 +90,7 @@ sh ./setup.sh --help
 curl -fsSL https://raw.githubusercontent.com/frankwei98/Xbox-Download-Proxy/main/install.sh | sh -s -- --mode native --binary /path/to/xdp --lan-ip 192.168.1.10
 ```
 
-如果已经下载源码，也可以运行 `sh ./setup.sh --mode native --binary /path/to/xdp --lan-ip 192.168.1.10`。指定 `--binary` 后不会再编译源码；完成后仍需执行终端显示的启动命令。
+如果已经下载源码，也可以运行 `sh ./setup.sh --mode native --binary /path/to/xdp --lan-ip 192.168.1.10`。指定 `--binary` 后不会再编译源码；完成后仍需执行终端显示的启动命令。使用 `install.sh` 远程安装时也可指定此选项，以跳过 Release 下载和校验。远程自动下载只会使用当前最新稳定 Release 的匹配资产，不保证该 Release 已包含 `main` 分支的最新功能。
 
 ## 手动原生安装
 

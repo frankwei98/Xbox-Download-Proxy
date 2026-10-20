@@ -170,6 +170,7 @@ jobs:
               go test -race -count=1 -coverprofile=/coverage/coverage.out -covermode=atomic ./...
               go vet ./...
               sh /src/scripts/setup_test.sh
+              sh /src/scripts/install_test.sh
               sh /src/scripts/setup_smoke_test.sh
             '
       - name: Upload coverage

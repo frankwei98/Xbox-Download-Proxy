@@ -25,12 +25,12 @@ Windows 可以作为下载客户端，目前不支持作为服务端。本项目
 
 | 安装方式 | 适合谁 | 需要提前准备 |
 | --- | --- | --- |
-| 本机安装（`native`） | 希望直接运行一个程序；macOS 用户也建议选此项 | Go 1.24+，或一个与系统、CPU 匹配的预编译二进制 |
+| 本机安装（`native`） | 希望直接运行一个程序；macOS 用户也建议选此项 | 远程一行安装会下载匹配的发布版；服务端需有 `curl`、`tar` 和 SHA256 校验工具 |
 | Docker Compose（`compose`） | 已在 Linux NAS 上使用 Docker | Docker 和 `docker compose` 插件；镜像会在本机从源码构建 |
 
 `amd64` 也叫 `x86_64`，通常是 Intel / AMD 的 64 位机器；`arm64` 也叫 `aarch64`，包括 Apple Silicon Mac 和部分 ARM NAS。可在服务端运行 `uname -m` 查看架构。
 
-原生安装没有 Go 时，可从[项目 Releases](https://github.com/frankwei98/Xbox-Download-Proxy/releases)中选择已有版本的对应压缩包，解压后用 `--binary` 指定其中的 `xdp`，详见[部署参考](docs/deployment.md)。安装器不会自动下载发布版二进制。128/256 MiB 的小内存容器优先使用预编译文件，避免在容器内编译。
+本机一行安装会从[项目 Releases](https://github.com/frankwei98/Xbox-Download-Proxy/releases)自动下载适合这台机器的最新稳定版，**不需要安装 Go，也不需要手动下载二进制文件**。脚本会检查文件的 SHA256 校验值，确认下载内容完整；下载或校验失败时会停止安装。
 
 ## 第一步：安装到服务端
 
@@ -44,7 +44,7 @@ Windows 可以作为下载客户端，目前不支持作为服务端。本项目
 curl -fsSL https://raw.githubusercontent.com/frankwei98/Xbox-Download-Proxy/main/install.sh | sh
 ```
 
-这条命令会下载 `main` 分支的完整源码并启动交互引导。按提示填写：
+这条命令会下载并启动安装引导：本机模式使用最新发布版程序，Compose 模式从源码构建镜像。按提示填写：
 
 | 引导项 | 第一次使用怎么选 |
 | --- | --- |
@@ -66,6 +66,8 @@ curl -fsSL https://raw.githubusercontent.com/frankwei98/Xbox-Download-Proxy/main
 ```sh
 sh ./setup.sh
 ```
+
+本地 `setup.sh` 面向源码安装，原生模式需要 Go 1.24+ 或通过 `--binary PATH` 指定已有二进制。如果希望自动下载发布版，请使用上面的一行命令。
 
 指定安装参数、使用预编译文件、安装依赖或手动部署，请查看[部署与安装参考](docs/deployment.md)。脚本使用 `/bin/sh`，无需安装 Bash；不会自动提权或修改系统 DNS、防火墙。
 
@@ -151,13 +153,13 @@ docker compose -f "$HOME/.local/share/xdp/compose.yaml" down
 
 测试文件和实际游戏资源可能使用不同的 CDN 路径，结果不保证一致。先确认已应用节点、重新启动加速服务，并正确设置客户端 DNS。客户端的旧 DNS 缓存、IPv6 DNS 或加密 DNS 也可能让请求绕过服务。
 
-### 安装时提示缺少 Go 或证书？
+### 安装时提示缺少下载或校验工具？
 
-本机模式需要 Go 1.24+ 或通过 `--binary PATH` 提供预编译文件。Alpine / Debian 可显式使用 `--install-deps` 安装依赖，需由 root 执行；部分 Debian 仓库中的 Go 版本可能不满足要求。具体命令见[部署参考](docs/deployment.md)。
+远程一行安装的 `native` 模式需要 `curl`、`tar` 和 `sha256sum` 或 `shasum`，不需要 Go。`--binary PATH` 可直接使用已有二进制并跳过自动下载。若已下载仓库后运行 `sh ./setup.sh`，本地源码安装仍需 Go 1.24+ 或通过 `--binary PATH` 提供预编译文件。Linux 原生服务运行所需的证书依赖可用 `--install-deps` 显式安装，该选项需由 root 执行。具体命令见[部署参考](docs/deployment.md)。
 
 ### 如何更新？
 
-重新运行安装引导，填写原来的安装目录，并在提示时确认覆盖生成文件。已有配置和 token 会保留；使用预编译文件的用户需提供新的二进制。更新完成后重启程序或 Compose 容器，使新版本生效。更新前建议备份安装目录中的 `data/`。
+重新运行远程安装引导，填写原来的安装目录，并在提示时确认覆盖生成文件。未指定 `--binary` 的 `native` 模式会再次下载最新稳定发布版并验证 SHA256；指定 `--binary PATH` 时使用你提供的新二进制。已有配置和 token 会保留。Compose 模式使用保留的源码重建镜像。更新完成后重启程序或 Compose 容器，使新版本生效。更新前建议备份安装目录中的 `data/`。本地 `sh ./setup.sh` 仍按本地源码构建流程工作。
 
 ### 数据和登录凭证在哪里？
 
