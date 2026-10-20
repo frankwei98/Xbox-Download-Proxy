@@ -53,7 +53,7 @@ curl -fsSL https://raw.githubusercontent.com/frankwei98/Xbox-Download-Proxy/main
 | 服务端 LAN IPv4 | 填 NAS 或服务端电脑的局域网 IP，例如 `192.168.1.10` |
 | 管理端口 | 没有冲突就保留 `8080` |
 | 离线下载与 Xbox 本地回传 | 第一次使用建议选否，先验证基本下载选路 |
-| 是否立即启动（Compose 模式） | 选是可直接启动管理页面 |
+| 开机自启动并立即启动 Web/API | Linux 默认选是；可用 `--autostart no` 跳过。macOS 原生安装不支持开机自启动，默认否 |
 
 安装结束后，终端会显示 **管理页面地址、管理 token 和启动命令**。token 就是登录管理页面的凭证，请妥善保存。
 
@@ -69,11 +69,11 @@ sh ./setup.sh
 
 本地 `setup.sh` 面向源码安装，原生模式需要 Go 1.24+ 或通过 `--binary PATH` 指定已有二进制。如果希望自动下载发布版，请使用上面的一行命令。
 
-指定安装参数、使用预编译文件、安装依赖或手动部署，请查看[部署与安装参考](docs/deployment.md)。脚本使用 `/bin/sh`，无需安装 Bash；不会自动提权或修改系统 DNS、防火墙。
+指定安装参数、使用预编译文件、安装依赖或手动部署，请查看[部署与安装参考](docs/deployment.md)。脚本使用 `/bin/sh`，无需安装 Bash；仅在启用 Linux 原生开机自启动时才会按需通过 `sudo` 或 `doas` 提权，不会修改系统 DNS 或防火墙。
 
 ## 第二步：启动并打开管理页面
 
-**安装完成不等于已经启动。** 请执行安装结束时显示的 `Start Web/API with:` 命令。
+Linux 安装器会询问是否启用开机自启动并立即启动 Web/API，默认选择是；macOS 原生安装不支持开机自启动，默认选择否。选择否或在 macOS 上安装后，请执行安装结束时显示的 `Start Web/API with:` 命令。
 
 如果使用默认安装目录，命令如下，按你的安装方式选择一条：
 
@@ -81,7 +81,7 @@ sh ./setup.sh
 # 本机安装：在前台运行，保持终端打开
 sh "$HOME/.local/share/xdp/start.sh"
 
-# Docker Compose：在后台运行；安装时已选择立即启动的可跳过
+# Docker Compose：在后台运行；安装时已选择启动的可跳过
 docker compose -f "$HOME/.local/share/xdp/compose.yaml" up -d
 ```
 

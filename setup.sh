@@ -1,5 +1,5 @@
 #!/bin/sh
-# Install Xbox Download Proxy locally without changing host networking or privileges.
+# Install Xbox Download Proxy locally, optionally registering a boot service.
 set -eu
 
 usage() {
@@ -16,7 +16,8 @@ Options:
   --offline yes|no       Enable or disable offline downloads and Xbox local delivery
   --binary PATH          Install this prebuilt xdp instead of compiling (low-memory hosts)
   --install-deps         Install native dependencies with apk/apt-get (requires root)
-  --start                In Compose mode, start Web/API after initialization
+  --autostart yes|no     Enable boot autostart and start Web/API (default: yes on Linux/Compose)
+  --start                In Compose mode, start Web/API even with --autostart no
   --yes                  Allow replacing generated files and binaries
   --help                 Show this help
 
@@ -24,7 +25,8 @@ Native mode builds current sources with Go, or uses an existing ./xdp if Go is u
 the Docker Compose plugin (`docker compose`). Compose initializes data but does
 not start DNS/HTTP services; --start starts only the Web/API container.
 Linux native installs also generate OpenRC/systemd definitions and install-service.sh.
-Run that helper separately as root to enable a system service. No Bash is needed.
+Autostart registers and starts the service, using sudo/doas if needed. No Bash is needed.
+Port checks must pass before replacing the binary or starting services.
 EOF
 }
 
@@ -43,6 +45,7 @@ offline=
 offline_set=0
 prebuilt=
 install_deps=0
+autostart=
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -56,6 +59,7 @@ while [ "$#" -gt 0 ]; do
         fail "--binary requires a path"
       fi
       prebuilt=$2; shift 2 ;;
+    --autostart) [ "$#" -ge 2 ] || fail "--autostart requires yes or no"; autostart=$2; shift 2 ;;
     --install-deps) install_deps=1; shift ;;
     --yes) yes=1; shift ;;
     --start) start=1; shift ;;
@@ -63,6 +67,8 @@ while [ "$#" -gt 0 ]; do
     *) fail "unknown option: $1" ;;
   esac
 done
+
+case "$autostart" in ''|yes|no) ;; *) fail "--autostart must be yes or no" ;; esac
 
 if [ "$offline_set" -eq 1 ]; then
   case "$offline" in
@@ -145,14 +151,26 @@ if [ "$web_port" -lt 1 ] || [ "$web_port" -gt 65535 ]; then
 fi
 case "$web_port" in 53|80|443) fail "Web port must not conflict with DNS/HTTP/TLS port $web_port" ;; esac
 
-if [ "$has_tty" -eq 1 ] && [ "$mode" = compose ] && [ "$start" -eq 0 ]; then
-  printf 'Start the Web/API service after setup? [y/N]: '
-  IFS= read -r answer || true
-  case "$answer" in y|Y|yes|YES) start=1 ;; esac
-fi
-
 script_dir=$(CDPATH='' cd -- "$(dirname "$0")" && pwd -P)
 os=$(uname -s)
+if [ "$mode" = native ] && [ "$os" != Linux ]; then
+  [ "$autostart" != yes ] || fail "native boot autostart is supported on Linux only"
+  autostart=no
+  printf 'Native boot autostart is unavailable on %s; use start.sh in the foreground.\n' "$os"
+elif [ -z "$autostart" ]; then
+  autostart=yes
+  if [ "$has_tty" -eq 1 ]; then
+    while :; do
+      printf 'Enable boot autostart and start Web/API now? [Y/n]: '
+      IFS= read -r answer || fail "could not read autostart choice; use --autostart yes|no"
+      case "$answer" in
+        ''|y|Y|yes|YES) break ;;
+        n|N|no|NO) autostart=no; break ;;
+        *) printf 'Please answer yes or no.\n' ;;
+      esac
+    done
+  fi
+fi
 if [ "$install_deps" -eq 1 ]; then
   [ "$os" = Linux ] || fail "--install-deps supports Debian and Alpine Linux only"
   [ "$(id -u)" -eq 0 ] || fail "--install-deps requires root; rerun explicitly with su, sudo or doas"
@@ -195,6 +213,39 @@ confirm_replace() {
   fail "refusing to replace existing generated file: $target (use --yes to update)"
 }
 
+# doctor in older Releases reads configuration only; use a temporary copy so the
+# selected Web/API port is checked without altering an existing installation.
+prepare_port_check() {
+  check_dir=$(mktemp -d "$install_dir/.port-check.XXXXXX")
+  trap 'rm -rf "$check_dir"; if [ -n "${staged:-}" ]; then rm -f "$staged"; fi' EXIT
+  trap 'exit 1' HUP INT TERM
+  if [ -f "$install_dir/data/config.json" ]; then
+    cp "$install_dir/data/config.json" "$check_dir/config.json"
+  fi
+}
+configure_port_check() {
+  sed -e 's/"webListen"[[:space:]]*:[[:space:]]*"[^"]*"/"webListen": ":'"$web_port"'"/' \
+      -e 's/"lanIP"[[:space:]]*:[[:space:]]*"[^"]*"/"lanIP": "'"$lan_ip"'"/' \
+      "$check_dir/config.json" > "$check_dir/config.tmp"
+  mv "$check_dir/config.tmp" "$check_dir/config.json"
+  printf 'Checking DNS UDP/TCP, HTTP, TLS and Web/API ports before installation...\n'
+}
+port_check_failed() {
+  fail "port check failed; resolve the reported conflicts or bind permissions first (use root for low ports). Stop an existing xdp before updating; no processes were stopped"
+}
+
+run_as_root() {
+  if [ "$(id -u)" -eq 0 ]; then
+    "$@"
+  elif command -v sudo >/dev/null 2>&1; then
+    sudo "$@"
+  elif command -v doas >/dev/null 2>&1; then
+    doas "$@"
+  else
+    fail "autostart requires root, sudo or doas; rerun as root or use --autostart no"
+  fi
+}
+
 if [ "$mode" = native ]; then
   binary=$install_dir/xdp
   start_script=$install_dir/start.sh
@@ -210,7 +261,7 @@ if [ "$mode" = native ]; then
 '*|*"$cr"*|*"$tab"*) fail "installation path cannot contain line breaks or tabs" ;; esac
   fi
   staged=$(mktemp "$install_dir/.xdp.XXXXXX")
-  trap 'rm -f "$staged"' EXIT
+  prepare_port_check
   trap 'exit 1' HUP INT TERM
   if [ -n "$prebuilt" ]; then
     if [ ! -f "$prebuilt" ] || [ ! -r "$prebuilt" ]; then
@@ -237,7 +288,15 @@ if [ "$mode" = native ]; then
   fi
   chmod 755 "$staged"
   "$staged" --version >/dev/null 2>&1 || fail "binary cannot run on $(uname -s)/$(uname -m); select the matching Linux/macOS amd64/arm64 build"
-  # Replacing by rename also works while an earlier executable is running on Linux.
+  "$staged" init --data-dir "$check_dir" >/dev/null
+  configure_port_check
+  if [ "$os" = Linux ] && [ "$autostart" = yes ]; then
+    run_as_root "$staged" doctor --data-dir "$check_dir" || port_check_failed
+  else
+    "$staged" doctor --data-dir "$check_dir" || port_check_failed
+  fi
+  rm -rf "$check_dir"
+  # Replace only after the preflight succeeds.
   mv -f "$staged" "$binary"
   if [ "$offline_set" -eq 1 ]; then
     "$binary" init --data-dir "$install_dir/data" "--offline=$offline"
@@ -296,14 +355,20 @@ if [ "$mode" = native ]; then
     printf 'Binding DNS/HTTP/TLS low ports needs permission. Stop the foreground server before restarting as root (su, sudo or doas).\n'
   fi
   if [ "$os" = Linux ]; then
-    printf 'Optional systemd/OpenRC service: as root run '
-    quote_sh "$install_dir/install-service.sh"
-    printf ' --start\nNo system service has been installed or enabled by setup.\n'
+    if [ "$autostart" = yes ]; then
+      set -- "$install_dir/install-service.sh" --start
+      [ "$yes" -eq 0 ] || set -- "$@" --yes
+      run_as_root sh "$@"
+    else
+      printf 'Boot autostart was not enabled. To enable it later, as root run '
+      quote_sh "$install_dir/install-service.sh"
+      printf ' --start\n'
+    fi
     if [ ! -s /etc/ssl/certs/ca-certificates.crt ] && [ ! -s /etc/ssl/cert.pem ]; then
       printf 'Warning: CA certificates are missing; HTTPS candidate sources need ca-certificates. Rerun with --install-deps as root.\n'
     fi
   fi
-  printf 'Setup never runs privilege escalation or changes DNS/firewall settings.\n'
+  printf 'Setup does not change DNS/firewall settings.\n'
   if [ -r "$install_dir/data/token" ]; then
     printf 'Management token: '
     cat "$install_dir/data/token"
@@ -344,6 +409,8 @@ yaml_quote() {
   yaml_quote "$script_dir"
   printf '\n      dockerfile: '
   yaml_quote "$script_dir/Dockerfile"
+  printf '\n    restart: '
+  if [ "$autostart" = yes ]; then printf 'unless-stopped'; else printf '"no"'; fi
   printf '\n    image: xdp:local\n    network_mode: host\n    cap_add:\n      - NET_BIND_SERVICE\n    volumes:\n      - type: bind\n        source: '
   yaml_quote "$install_dir/data"
   printf '\n        target: /data\n      - type: bind\n        source: '
@@ -357,12 +424,18 @@ yaml_quote() {
 
 compose() { docker compose -f "$compose_file" "$@"; }
 compose build || fail "Docker Compose image build failed"
+prepare_port_check
+# Share the host network explicitly so bind checks match the eventual service.
+docker run --rm --network host --user "$(id -u):$(id -g)" -v "$check_dir:/data" xdp:local init --data-dir /data >/dev/null || fail "port-check initialization failed"
+configure_port_check
+docker run --rm --network host -v "$check_dir:/data" xdp:local doctor --data-dir /data || port_check_failed
+rm -rf "$check_dir"
 if [ "$offline_set" -eq 1 ]; then
   compose run --rm xdp init --data-dir /data "--offline=$offline" || fail "Compose initialization failed"
 else
   compose run --rm xdp init --data-dir /data || fail "Compose initialization failed"
 fi
-if [ "$start" -eq 1 ]; then
+if [ "$start" -eq 1 ] || [ "$autostart" = yes ]; then
   compose up -d || fail "Compose Web/API startup failed"
 fi
 printf '\nInstalled Compose setup.\n'

@@ -22,6 +22,7 @@ if [ "$1" = init ]; then
   [ "$1" = --data-dir ]
   mkdir -p "$2"
   printf 'release-test-token\n' > "$2/token"
+  printf '{"webListen":":8080","lanIP":"192.168.1.20"}\n' > "$2/config.json"
 fi
 BINARY
 chmod +x "$tmp/package/xdp"
@@ -162,7 +163,7 @@ mkdir -p "$tmp/fixture/project/scripts"
 cp "$repo/scripts/install-service.sh" "$tmp/fixture/project/scripts/"
 tar -czf "$tmp/real-source.tar.gz" -C "$tmp/fixture" project
 HOME="$tmp/real-home" INSTALL_TEST_ARCHIVE="$tmp/real-source.tar.gz" \
-  sh "$repo/install.sh" --lan-ip 192.168.1.10 --install-dir "$tmp/installed app" > "$tmp/out"
+  sh "$repo/install.sh" --lan-ip 192.168.1.10 --autostart no --install-dir "$tmp/installed app" > "$tmp/out"
 [ "$(cat "$tmp/installed app/data/token")" = release-test-token ]
 [ -x "$tmp/installed app/xdp" ]
 [ -x "$tmp/installed app/start.sh" ]
