@@ -29,7 +29,7 @@ func main() {
 	}
 }
 func usage() {
-	fmt.Println(`Xbox Download Proxy 0.1.0
+	fmt.Println(`Xbox Download Proxy 0.0.3
 Usage: xdp <command> [flags]
 Commands:
   init       Create config.json and management token
@@ -57,7 +57,7 @@ func run(args []string) error {
 		return nil
 	}
 	if args[0] == "version" || args[0] == "--version" {
-		fmt.Println("0.1.0")
+		fmt.Println("0.0.3")
 		return nil
 	}
 	command := args[0]
@@ -390,7 +390,7 @@ func serve(dir, token string, c config.Config, start bool, downloadDir string) e
 			return e
 		}
 	}
-	fmt.Printf("Xbox Download Proxy 0.1.0\nWebUI: http://%s%s\nToken: %s\nData: %s\n", c.LANIP, webPort(c.WebListen), token, dir)
+	fmt.Printf("Xbox Download Proxy 0.0.3\nWebUI: http://%s%s\nToken: %s\nData: %s\n", c.LANIP, webPort(c.WebListen), token, dir)
 	if a.Status().Running {
 		fmt.Println("Download services: ON (DNS / HTTP / configured TLS)")
 	} else {

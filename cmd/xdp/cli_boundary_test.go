@@ -34,8 +34,8 @@ func TestHelpVersionAndFlagErrorsDoNotRequireInitializedState(t *testing.T) {
 		{"no arguments", nil, "Usage: xdp <command>"},
 		{"help command", []string{"help"}, "Usage: xdp <command>"},
 		{"help flag", []string{"--help"}, "Usage: xdp <command>"},
-		{"version command", []string{"version"}, "0.1.0"},
-		{"version flag", []string{"--version"}, "0.1.0"},
+		{"version command", []string{"version"}, "0.0.3"},
+		{"version flag", []string{"--version"}, "0.0.3"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			output, err := captureCommandOutput(t, func() error { return run(tc.args) })
