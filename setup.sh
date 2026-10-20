@@ -242,7 +242,9 @@ check_unprivileged_ports() {
   "$staged" doctor --data-dir "$check_dir" > "$check_dir/doctor.log" 2>&1 || doctor_status=$?
   cat "$check_dir/doctor.log"
   [ "$doctor_status" -ne 0 ] || return 0
-  [ "$doctor_status" -eq 1 ] && [ "$(id -u)" -ne 0 ] || port_check_failed
+  if [ "$doctor_status" -ne 1 ] || [ "$(id -u)" -eq 0 ]; then
+    port_check_failed
+  fi
   if awk '
     /^FAIL / {
       failures++
