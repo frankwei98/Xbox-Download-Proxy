@@ -28,6 +28,8 @@ export INSTALL_TEST_ARGS="$tmp/args"
 export INSTALL_TEST_ARCHIVE="$tmp/source.tar.gz"
 
 # Match the documented pipeline; preserve each argument and retain the sources.
+# Keep a pipe (rather than file redirection) to simulate curl supplying stdin.
+# shellcheck disable=SC2002
 cat "$repo/install.sh" | HOME="$tmp/home with spaces" sh -s -- \
   --mode native --lan-ip 192.168.1.10 --binary '/path with spaces/xdp' > "$tmp/out"
 printf '%s\n' --mode native --lan-ip 192.168.1.10 --binary '/path with spaces/xdp' > "$tmp/expected"

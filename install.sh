@@ -26,10 +26,10 @@ main() {
     }
   tar -xzf "$source_dir/source.tar.gz" -C "$source_dir" --strip-components=1
   rm -f "$source_dir/source.tar.gz"
-  [ -f "$source_dir/setup.sh" ] && [ -f "$source_dir/go.mod" ] || {
+  if [ ! -f "$source_dir/setup.sh" ] || [ ! -f "$source_dir/go.mod" ]; then
     printf 'install: incomplete source archive\n' >&2
     exit 1
-  }
+  fi
   complete=1
 
   # In `curl | sh`, stdin contains this script. Read prompts from the
