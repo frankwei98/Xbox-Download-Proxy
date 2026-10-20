@@ -38,7 +38,7 @@ curl -fsSL https://raw.githubusercontent.com/frankwei98/Xbox-Download-Proxy/main
 sh ./setup.sh
 ```
 
-本地 `setup.sh` 引导选择本机安装或 Docker Compose、安装目录、服务端 LAN IPv4、管理端口，以及是否启用离线下载和 Xbox 本地回传。该功能默认关闭；已有配置在此项留空时保持原值。默认安装到 `~/.local/share/xdp`，完成后直接显示 **WebUI 地址、管理 token 和启动命令**。已有配置与 token 会保留；更新生成的二进制、启动脚本或 Compose 文件时会先确认。安装器在替换二进制或启动前，使用临时配置运行实际的 `xdp doctor` 检查 DNS UDP/TCP、HTTP、TLS 和配置的 Web 端口；端口冲突或权限不足时会停止，不会终止占用端口的其他进程。更新前需先停止正在运行的实例。脚本不会修改系统 DNS，也不会自动安装软件（`--install-deps` 除外）。远程一行安装与本地 `setup.sh` 的 native 二进制获取方式不同：远程安装默认下载并校验发布版，本地脚本始终使用当前仓库源码或已有二进制。
+本地 `setup.sh` 引导选择本机安装或 Docker Compose、安装目录、服务端 LAN IPv4、管理端口，以及是否启用离线下载和 Xbox 本地回传。该功能默认关闭；已有配置在此项留空时保持原值。默认安装到 `~/.local/share/xdp`，完成后直接显示 **WebUI 地址、管理 token 和启动命令**。已有配置与 token 会保留；更新生成的二进制、启动脚本或 Compose 文件时会先确认。安装器在替换二进制或启动前，使用临时配置运行实际的 `xdp doctor` 检查 DNS UDP/TCP、HTTP、TLS 和配置的 Web 端口；端口冲突或管理端口不可用时会停止，不会终止占用端口的其他进程。Linux 有 `sudo`/`doas` 时会提权检查端口；关闭自启且没有提权工具的普通用户安装，仅低端口绑定权限不足时会警告并继续，但这些端口是否空闲仍需在有权限时确认。更新前需先停止正在运行的实例。脚本不会修改系统 DNS，也不会自动安装软件（`--install-deps` 除外）。远程一行安装与本地 `setup.sh` 的 native 二进制获取方式不同：远程安装默认下载并校验发布版，本地脚本始终使用当前仓库源码或已有二进制。
 
 `setup.sh` 和生成的 `start.sh` 使用 POSIX `/bin/sh`，无需安装 Bash。**本地 `sh ./setup.sh`** 的 Linux 原生模式有 Go 1.24 或更新版本时会从当前源码以 `CGO_ENABLED=0` 编译静态二进制；没有 Go 时使用项目根目录已有的 `xdp`。也可用 `--binary PATH` 指定预编译的 Linux amd64/arm64 二进制；指定后始终直接使用该文件，不会因本机安装了 Go 而重新编译。远程一行安装的 `native` 默认使用经 SHA256 校验的 GitHub Release 二进制，即使系统已安装 Go 也不会编译当前源码。128/256 MiB 容器建议使用远程发布版或提供预编译二进制，避免编译时内存不足。
 
@@ -49,7 +49,7 @@ sh ./setup.sh --mode native --install-dir /opt/xdp --install-deps --lan-ip 192.1
 sh ./setup.sh --mode native --install-dir /opt/xdp --binary ./dist/xdp-linux-amd64 --lan-ip 192.168.1.10
 ```
 
-Linux 原生安装默认会询问 `Enable boot autostart and start Web/API now? [Y/n]`，交互和非交互默认均为是。选择是会调用生成的 `install-service.sh --manager auto --start` 注册并启动服务；非 root 执行时仅在选择启用后使用 `sudo` 或 `doas` 提权。可用 `--autostart no` 跳过注册和启动。该脚本也可手动运行，并可指定 `--manager systemd` 或 `--manager openrc`；`--yes` 跳过覆盖确认。安装引导的 `--start` 只适用于 Compose；原生安装请使用 `--autostart yes|no`。新安装的 DNS/302 加速服务仍默认关闭，需登录 WebUI 后手动启用，已有安装沿用 `autoStart` 设置。systemd 日志可用 `journalctl -u xdp` 查看，OpenRC 日志位于安装目录的 `logs/xdp.log`，日志目录和文件权限分别为 0700、0600。
+Linux 原生安装默认会询问 `Enable boot autostart and start Web/API now? [Y/n]`，交互和非交互默认均为是。选择是会调用生成的 `install-service.sh --manager auto --start` 注册并启动服务；非 root 执行时使用 `sudo` 或 `doas` 提权注册服务；端口预检有这些工具时也会使用，与自启选择无关。可用 `--autostart no` 跳过注册和启动。该脚本也可手动运行，并可指定 `--manager systemd` 或 `--manager openrc`；`--yes` 跳过覆盖确认。安装引导的 `--start` 只适用于 Compose；原生安装请使用 `--autostart yes|no`。新安装的 DNS/302 加速服务仍默认关闭，需登录 WebUI 后手动启用，已有安装沿用 `autoStart` 设置。systemd 日志可用 `journalctl -u xdp` 查看，OpenRC 日志位于安装目录的 `logs/xdp.log`，日志目录和文件权限分别为 0700、0600。
 
 macOS 原生安装不支持开机自启动，默认不启用；显式指定 `--autostart yes` 会报错。安装后按终端提示在前台启动 Web/API。
 

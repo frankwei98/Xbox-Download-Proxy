@@ -234,6 +234,39 @@ port_check_failed() {
   fail "port check failed; resolve the reported conflicts or bind permissions first (use root for low ports). Stop an existing xdp before updating; no processes were stopped"
 }
 
+# Existing Releases use exit 1 for both occupied ports and permission failures.
+# Only defer recognized low-port bind permission failures; unknown diagnostics,
+# Web/API failures, and nonstandard exit statuses must remain fatal.
+check_unprivileged_ports() {
+  doctor_status=0
+  "$staged" doctor --data-dir "$check_dir" > "$check_dir/doctor.log" 2>&1 || doctor_status=$?
+  cat "$check_dir/doctor.log"
+  [ "$doctor_status" -ne 0 ] || return 0
+  [ "$doctor_status" -eq 1 ] && [ "$(id -u)" -ne 0 ] || port_check_failed
+  if awk '
+    /^FAIL / {
+      failures++
+      dns = ($2 == "DNS" && ($3 == "UDP" || $3 == "TCP"))
+      address = dns ? $4 : $3
+      sub(/:$/, "", address)
+      sub(/^.*:/, "", address)
+      if (!(dns || $2 == "HTTP" || $2 == "TLS") ||
+          address !~ /^[0-9]+$/ || (address + 0) < 1 || (address + 0) >= 1024 ||
+          $0 !~ /: bind: permission denied$/) fatal = 1
+      next
+    }
+    /^OK   / || /^LAN IP: / { next }
+    $0 == "No host DNS, hosts, firewall or router settings were changed." { next }
+    $0 == "xdp: one or more ports unavailable; use an unused address/port and check privileges" { next }
+    { fatal = 1 }
+    END { exit (failures == 0 || fatal) }
+  ' "$check_dir/doctor.log"; then
+    printf 'Warning: low-port bind permissions are unavailable; these ports could not be verified. Installation will continue. Run xdp with root or low-port binding permissions before enabling acceleration.\n' >&2
+  else
+    port_check_failed
+  fi
+}
+
 run_as_root() {
   if [ "$(id -u)" -eq 0 ]; then
     "$@"
@@ -290,10 +323,10 @@ if [ "$mode" = native ]; then
   "$staged" --version >/dev/null 2>&1 || fail "binary cannot run on $(uname -s)/$(uname -m); select the matching Linux/macOS amd64/arm64 build"
   "$staged" init --data-dir "$check_dir" >/dev/null
   configure_port_check
-  if [ "$os" = Linux ] && [ "$autostart" = yes ]; then
+  if [ "$os" = Linux ] && { [ "$autostart" = yes ] || [ "$(id -u)" -eq 0 ] || command -v sudo >/dev/null 2>&1 || command -v doas >/dev/null 2>&1; }; then
     run_as_root "$staged" doctor --data-dir "$check_dir" || port_check_failed
   else
-    "$staged" doctor --data-dir "$check_dir" || port_check_failed
+    check_unprivileged_ports
   fi
   rm -rf "$check_dir"
   # Replace only after the preflight succeeds.
