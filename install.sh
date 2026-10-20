@@ -17,7 +17,7 @@ read_options() {
       --binary)
         if [ "$#" -lt 2 ] || [ -z "$2" ]; then fail '--binary requires a path'; fi
         explicit_binary=1; shift 2 ;;
-      --install-dir|--lan-ip|--web-port|--offline)
+      --install-dir|--lan-ip|--web-port|--offline|--autostart)
         [ "$#" -ge 2 ] || fail "$1 requires a value"
         shift 2 ;;
       --help|-h) help=1; shift ;;

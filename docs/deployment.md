@@ -38,7 +38,7 @@ curl -fsSL https://raw.githubusercontent.com/frankwei98/Xbox-Download-Proxy/main
 sh ./setup.sh
 ```
 
-本地 `setup.sh` 引导选择本机安装或 Docker Compose、安装目录、服务端 LAN IPv4、管理端口，以及是否启用离线下载和 Xbox 本地回传。该功能默认关闭；已有配置在此项留空时保持原值。默认安装到 `~/.local/share/xdp`，完成后直接显示 **WebUI 地址、管理 token 和启动命令**。已有配置与 token 会保留；更新生成的二进制、启动脚本或 Compose 文件时会先确认。脚本不会修改系统 DNS 或自动提权。远程一行安装与本地 `setup.sh` 的 native 二进制获取方式不同：远程安装默认下载并校验发布版，本地脚本始终使用当前仓库源码或已有二进制。
+本地 `setup.sh` 引导选择本机安装或 Docker Compose、安装目录、服务端 LAN IPv4、管理端口，以及是否启用离线下载和 Xbox 本地回传。该功能默认关闭；已有配置在此项留空时保持原值。默认安装到 `~/.local/share/xdp`，完成后直接显示 **WebUI 地址、管理 token 和启动命令**。已有配置与 token 会保留；更新生成的二进制、启动脚本或 Compose 文件时会先确认。安装器在替换二进制或启动前，使用临时配置运行实际的 `xdp doctor` 检查 DNS UDP/TCP、HTTP、TLS 和配置的 Web 端口；端口冲突或权限不足时会停止，不会终止占用端口的其他进程。更新前需先停止正在运行的实例。脚本不会修改系统 DNS，也不会自动安装软件（`--install-deps` 除外）。远程一行安装与本地 `setup.sh` 的 native 二进制获取方式不同：远程安装默认下载并校验发布版，本地脚本始终使用当前仓库源码或已有二进制。
 
 `setup.sh` 和生成的 `start.sh` 使用 POSIX `/bin/sh`，无需安装 Bash。**本地 `sh ./setup.sh`** 的 Linux 原生模式有 Go 1.24 或更新版本时会从当前源码以 `CGO_ENABLED=0` 编译静态二进制；没有 Go 时使用项目根目录已有的 `xdp`。也可用 `--binary PATH` 指定预编译的 Linux amd64/arm64 二进制；指定后始终直接使用该文件，不会因本机安装了 Go 而重新编译。远程一行安装的 `native` 默认使用经 SHA256 校验的 GitHub Release 二进制，即使系统已安装 Go 也不会编译当前源码。128/256 MiB 容器建议使用远程发布版或提供预编译二进制，避免编译时内存不足。
 
@@ -49,11 +49,13 @@ sh ./setup.sh --mode native --install-dir /opt/xdp --install-deps --lan-ip 192.1
 sh ./setup.sh --mode native --install-dir /opt/xdp --binary ./dist/xdp-linux-amd64 --lan-ip 192.168.1.10
 ```
 
-Linux 原生安装会生成 `xdp.service`、`xdp.openrc` 和 `install-service.sh`，但只生成文件，不写入 `/etc`，也不注册或启用服务。需要开机启动时，以 root 运行 `/opt/xdp/install-service.sh --manager auto --start`；也可指定 `--manager systemd` 或 `--manager openrc`，并使用 `--yes` 跳过覆盖确认。非 root 用户可通过 `sudo`、`doas` 或 `su` 执行。`--start` 会立即启动 Web/API；新安装的 DNS/302 加速服务仍默认关闭，需登录 WebUI 后手动启用，已有安装沿用 `autoStart` 设置。systemd 日志可用 `journalctl -u xdp` 查看，OpenRC 日志位于安装目录的 `logs/xdp.log`，日志目录和文件权限分别为 0700、0600。
+Linux 原生安装默认会询问 `Enable boot autostart and start Web/API now? [Y/n]`，交互和非交互默认均为是。选择是会调用生成的 `install-service.sh --manager auto --start` 注册并启动服务；非 root 执行时仅在选择启用后使用 `sudo` 或 `doas` 提权。可用 `--autostart no` 跳过注册和启动。该脚本也可手动运行，并可指定 `--manager systemd` 或 `--manager openrc`；`--yes` 跳过覆盖确认。安装引导的 `--start` 只适用于 Compose；原生安装请使用 `--autostart yes|no`。新安装的 DNS/302 加速服务仍默认关闭，需登录 WebUI 后手动启用，已有安装沿用 `autoStart` 设置。systemd 日志可用 `journalctl -u xdp` 查看，OpenRC 日志位于安装目录的 `logs/xdp.log`，日志目录和文件权限分别为 0700、0600。
+
+macOS 原生安装不支持开机自启动，默认不启用；显式指定 `--autostart yes` 会报错。安装后按终端提示在前台启动 Web/API。
 
 没有实际 init 的最小容器应使用 `start.sh` 在前台运行，容器里存在 `systemctl` 命令不代表 systemd 可用。推荐在 LXC 中使用独立 LAN 固定 IP，并在网络/防火墙放行 UDP/TCP 53、TCP 80、443 和 8080；无需 privileged、nesting、TUN 或 NET_ADMIN，只需允许绑定低端口。项目不会自动修改宿主机防火墙。日常运行建议从 128 MiB 内存起步，256 MiB 更宽裕；这是运行预算，编译所需内存更高。
 
-生成的 `start.sh` 用于前台运行 Web/API；如启用 53/80/443 时提示权限不足，先用 Ctrl+C 停止前台进程，再以有低端口绑定权限的方式重启，之后在 WebUI 启用加速服务。Compose 模式需要 Docker 与 `docker compose`，使用本地 Dockerfile 构建，主要面向 Linux NAS；生成文件引用当前仓库的绝对路径，后续重建镜像需要保留仓库。更新已有安装的文件仍需 `--yes` 或交互确认。
+生成的 `start.sh` 用于前台运行 Web/API；如启用 53/80/443 时提示权限不足，先用 Ctrl+C 停止前台进程，再以有低端口绑定权限的方式重启，之后在 WebUI 启用加速服务。Compose 模式需要 Docker 与 `docker compose`，使用本地 Dockerfile 构建，主要面向 Linux NAS；生成文件引用当前仓库的绝对路径，后续重建镜像需要保留仓库。`--autostart yes` 会生成 `restart: unless-stopped` 并执行 `docker compose up -d`；`--autostart no` 会生成 `restart: no`。Compose 安装前会在 host 网络中检查端口。更新已有安装的文件仍需 `--yes` 或交互确认。
 
 也可直接传入参数：
 
@@ -63,12 +65,14 @@ sh ./setup.sh --mode compose --lan-ip 192.168.1.10 --install-dir ./deployment
 # 非交互启用或关闭离线下载与 Xbox 本地回传
 sh ./setup.sh --mode compose --lan-ip 192.168.1.10 --offline yes
 sh ./setup.sh --mode native --lan-ip 192.168.1.10 --offline no
-# Compose 初始化后立即启动 Web/API（新安装的加速服务仍保持关闭）
+# Linux 原生：默认启用开机自启动并立即启动 Web/API；可显式关闭
+sh ./setup.sh --mode native --lan-ip 192.168.1.10 --autostart no
+# Compose：启用开机自启动并立即启动 Web/API（默认值）
 sh ./setup.sh --mode compose --lan-ip 192.168.1.10 --install-dir ./deployment --yes --start
 sh ./setup.sh --help
 ```
 
-新安装默认只运行管理界面；已有安装沿用 `autoStart` 设置。登录后建议按以下顺序完成配置：
+新安装启动后默认只运行管理界面；已有安装沿用 `autoStart` 设置。登录后建议按以下顺序完成配置：
 
 1. 在“测速”选择下载域名组、所在省份和运营商，点击“按地区自动测速”。默认从匹配项中抽样最多 16 个节点，可调整至 8–128 个；搜索框也会参与筛选。没有地区匹配时会提示调整条件，未标注地区的节点可手选。
 2. 比较结果，点击“应用最快节点”或手动应用其他节点。只推荐成功且有有效吞吐的结果；应用节点会停止加速服务。
@@ -144,7 +148,7 @@ docker compose logs -f xdp
 
 默认离线下载目录位于 `./data/downloads`。如需使用 NAS 的大容量卷，可设置 `DOWNLOAD_PATH=/volume1/xdp-downloads`；Compose 会挂载到 `/downloads`，服务通过 `--download-dir /downloads` 使用它。
 
-Compose 服务启动 Web/API 后可通过 Web UI 启动 DNS/HTTP(S)；要让容器启动时一并开启这些服务，可在 `compose.yaml` 的命令中增加 `--start`。
+Compose 服务启动 Web/API 后可通过 Web UI 启动 DNS/HTTP(S)；要让容器启动时一并开启这些服务，可在 `compose.yaml` 的命令中增加 `--start`。安装器的 `--start` 仅用于 Compose，控制立即执行 `docker compose up -d`；`--autostart yes` 设置 `restart: unless-stopped` 并立即启动，`--autostart no` 设置 `restart: no`，而 `--start` 即使与 `--autostart no` 同用也会立即启动。
 
 
 ## 配置和安全
