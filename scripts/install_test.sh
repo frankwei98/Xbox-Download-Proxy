@@ -74,7 +74,9 @@ cat > "$tmp/bin/go" <<'GO'
 printf 'FAIL: Release installation invoked Go\n' >&2
 exit 77
 GO
-chmod +x "$tmp/bin/curl" "$tmp/bin/uname" "$tmp/bin/go"
+# Keep the simulated Linux installer independent of host privilege helpers.
+printf '#!/bin/sh\nprintf "0\n"\n' > "$tmp/bin/id"
+chmod +x "$tmp/bin/curl" "$tmp/bin/uname" "$tmp/bin/go" "$tmp/bin/id"
 export PATH="$tmp/bin:$PATH"
 export INSTALL_TEST_ARGS="$tmp/args"
 export INSTALL_TEST_ARCHIVE="$tmp/source.tar.gz"

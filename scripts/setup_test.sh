@@ -50,6 +50,18 @@ if [ "${1-}" = init ]; then
 fi
 if [ "${1-}" = doctor ]; then
   cat "$3/config.json" >> "$MOCK_LOG"
+  case "${MOCK_DOCTOR_ERROR:-}" in
+    permission|mixed)
+      printf 'FAIL DNS UDP :53: listen udp :53: bind: permission denied\n'
+      printf 'FAIL HTTP :80: listen tcp :80: bind: permission denied\n'
+      if [ "$MOCK_DOCTOR_ERROR" = mixed ]; then printf 'FAIL WebUI :18080: listen tcp :18080: bind: address already in use\n'; fi
+      printf 'xdp: one or more ports unavailable; use an unused address/port and check privileges\n' >&2
+      exit 1 ;;
+    config) printf 'xdp: config.json: invalid configuration\n' >&2; exit 1 ;;
+    web) printf 'FAIL WebUI :81: listen tcp :81: bind: permission denied\n'; exit 1 ;;
+    high) printf 'FAIL DNS UDP :5353: listen udp :5353: bind: permission denied\n'; exit 1 ;;
+    crash) printf 'FAIL HTTP :80: listen tcp :80: bind: permission denied\n'; exit 2 ;;
+  esac
   [ "${MOCK_DOCTOR_FAIL:-0}" -eq 0 ] || { printf 'FAIL WebUI :18080: address already in use\n'; exit 1; }
 fi
 BIN
@@ -190,7 +202,7 @@ assert contains "$(cat "$tmp/repo-install.out")" "cannot be the repository root"
 # on Alpine/Debian; hiding it must not depend on the host's filesystem layout.
 tools=$tmp/tools
 mkdir -p "$tools"
-for tool in cat chmod cp dirname id mkdir mktemp mv rm sed sh uname; do
+for tool in awk cat chmod cp dirname id mkdir mktemp mv rm sed sh uname; do
   ln -s "$(command -v "$tool")" "$tools/$tool"
 done
 if PATH="$tools" /bin/sh "$runner/setup.sh" --mode native --autostart no --install-dir "$tmp/missing-go" --lan-ip 10.0.0.1 --yes > "$tmp/no-go.out" 2>&1; then
@@ -328,5 +340,30 @@ assert contains "$(cat "$MOCK_LOG")" 'register --start --yes'
 : > "$MOCK_LOG"
 PATH="$deps" "$runner/setup.sh" --mode native --autostart no --binary "$native_dir/xdp" --install-dir "$tmp/native-no-autostart" --lan-ip 10.0.0.1 > "$tmp/native-no-autostart.out"
 if contains "$(cat "$MOCK_LOG")" 'register'; then printf 'FAIL: opted-out installation registered a service\n' >&2; exit 1; fi
+
+# Unprivileged installations without sudo/doas may defer low-port permission
+# requirements, but must still reject conflicts and every other doctor failure.
+PATH="$deps" MOCK_UID=1000 MOCK_DOCTOR_ERROR=permission "$runner/setup.sh" --mode native --autostart no --binary "$native_dir/xdp" --install-dir "$tmp/unprivileged-permission" --lan-ip 10.0.0.1 > "$tmp/permission.out" 2>&1
+assert test -x "$tmp/unprivileged-permission/start.sh"
+assert contains "$(cat "$tmp/permission.out")" 'Warning: low-port bind permissions'
+for failure in mixed config web high crash; do
+  if PATH="$deps" MOCK_UID=1000 MOCK_DOCTOR_ERROR="$failure" "$runner/setup.sh" --mode native --autostart no --binary "$native_dir/xdp" --install-dir "$tmp/unprivileged-$failure" --lan-ip 10.0.0.1 > "$tmp/$failure.out" 2>&1; then
+    printf 'FAIL: unprivileged installation ignored %s failure\n' "$failure" >&2; exit 1
+  fi
+  assert test ! -e "$tmp/unprivileged-$failure/xdp"
+done
+# A helper must be used for the check even if service autostart is disabled.
+cat > "$deps/sudo" <<'SUDO'
+#!/bin/sh
+printf 'sudo %s\n' "$*" >> "$MOCK_LOG"
+unset MOCK_DOCTOR_ERROR
+exec "$@"
+SUDO
+chmod +x "$deps/sudo"
+: > "$MOCK_LOG"
+PATH="$deps" MOCK_UID=1000 MOCK_DOCTOR_ERROR=permission "$runner/setup.sh" --mode native --autostart no --binary "$native_dir/xdp" --install-dir "$tmp/unprivileged-sudo" --lan-ip 10.0.0.1 > "$tmp/sudo.out" 2>&1
+assert contains "$(cat "$MOCK_LOG")" 'sudo '
+if contains "$(cat "$MOCK_LOG")" 'register'; then printf 'FAIL: port preflight registered a service\n' >&2; exit 1; fi
+rm "$deps/sudo"
 
 printf 'setup.sh tests passed\n'
